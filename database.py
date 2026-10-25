@@ -3,6 +3,7 @@
 # Если твой main.py импортирует database_addons и database_addons_extra,
 # используй пустые файлы-заглушки ниже, либо убери эти импорты из main.py.
 
+import time
 import random
 import aiosqlite
 
@@ -10,6 +11,53 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 
 DB_PATH = "bot_database.db"
+
+# ===== Эффекты (баффы, покупаемые в /shop и хранящиеся в инвентаре) =====
+
+EFFECTS = {
+    "shield": {
+        "name": "🛡️ Щит",
+        "description": "Защищает от дебаффа «Кривая рука» при открытии кейсов."
+    },
+    "discount": {
+        "name": "🏷️ Скидка",
+        "description": "Скидка 10% на покупку кейсов и ключей."
+    },
+    "income": {
+        "name": "💼 Пассивный доход",
+        "description": "Ежедневная награда становится 250 монет вместо 100."
+    },
+    "critic": {
+        "name": "⚡ Критик",
+        "description": "10% шанс увеличить выигрыш в мини-играх на 25%."
+    },
+    "crystal_guard": {
+        "name": "💎 Хранитель кристаллов",
+        "description": "15% шанс не потерять кристаллы при проигрыше."
+    },
+    "high_roller": {
+        "name": "🔥 Азарт",
+        "description": "Увеличивает максимальные ставки в мини-играх."
+    },
+}
+
+EFFECT_PRICES = {
+    "shield": 50,
+    "discount": 40,
+    "income": 60,
+    "critic": 45,
+    "crystal_guard": 55,
+    "high_roller": 70,
+}
+
+EFFECT_ROLE_IDS = {
+    "shield": 2001,
+    "discount": 2002,
+    "income": 2003,
+    "critic": 2004,
+    "crystal_guard": 2005,
+    "high_roller": 2006,
+}
 
 
 class Database:
@@ -35,15 +83,20 @@ class Database:
         name: str,
         case_rarity: str,
         case_price: int,
-        key_price: int
+        key_price: int,
+        case_crystal_price: int = 0,
+        key_crystal_price: int = 0
     ) -> int:
         """Создать кейс и вернуть его ID."""
         async with self.db.execute(
             """
-            INSERT INTO cases (guild_id, name, case_rarity, case_price, key_price, is_active)
-            VALUES (?, ?, ?, ?, ?, 0)
+            INSERT INTO cases
+                (guild_id, name, case_rarity, case_price, key_price,
+                 case_crystal_price, key_crystal_price, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
             """,
-            (guild_id, name, case_rarity, case_price, key_price)
+            (guild_id, name, case_rarity, case_price, key_price,
+             case_crystal_price, key_crystal_price)
         ) as cursor:
             await self.db.commit()
             return cursor.lastrowid
@@ -120,6 +173,8 @@ class Database:
                 case_rarity TEXT NOT NULL,
                 case_price INTEGER NOT NULL,
                 key_price INTEGER NOT NULL,
+                case_crystal_price INTEGER DEFAULT 0,
+                key_crystal_price INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 0,
                 created_at INTEGER DEFAULT (strftime('%s', 'now'))
             );
@@ -164,6 +219,7 @@ class Database:
                 guild_id INTEGER NOT NULL,
                 inventory_id INTEGER NOT NULL,
                 price INTEGER NOT NULL,
+                currency TEXT DEFAULT 'coins',
                 listed_at INTEGER DEFAULT (strftime('%s', 'now')),
                 is_sold INTEGER DEFAULT 0,
                 FOREIGN KEY (inventory_id) REFERENCES inventory(id)
@@ -344,6 +400,41 @@ class Database:
             await self.db.execute("ALTER TABLE users_new RENAME TO users")
             await self.db.commit()
 
+        # ===== Миграция v3: недостающие колонки (идемпотентно) =====
+        # Ранее эти ALTER-ы делал modules/update_v2.py при старте бота.
+        # Теперь схема полностью ведётся здесь, update_v2 не нужен.
+
+        async def _add_column(table: str, column: str, definition: str):
+            info = await self._fetchall(f"PRAGMA table_info({table})")
+            if not any(col["name"] == column for col in info):
+                await self.db.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                )
+                await self.db.commit()
+
+        await _add_column("users", "last_daily", "INTEGER DEFAULT 0")
+        await _add_column("cases", "case_crystal_price", "INTEGER DEFAULT 0")
+        await _add_column("cases", "key_crystal_price", "INTEGER DEFAULT 0")
+        await _add_column("market_listings", "currency", "TEXT DEFAULT 'coins'")
+
+        # История открытий кейсов (для статистики в инвентаре/профиле)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS case_open_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL,
+                case_id INTEGER NOT NULL,
+                role_id INTEGER,
+                rarity TEXT,
+                obtained_at INTEGER DEFAULT (strftime('%s', 'now'))
+            )
+        """)
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_history_user "
+            "ON case_open_history(user_id, guild_id)"
+        )
+        await self.db.commit()
+
         await self.db.execute("PRAGMA foreign_keys = ON")
         await self.db.commit()
 
@@ -400,6 +491,110 @@ class Database:
         ) as cursor:
             await self.db.commit()
             return cursor.rowcount > 0
+
+    # ===== Атомарное списание/выдача валюты (единый источник, без патчей) =====
+
+    async def try_spend_crystals(self, user_id: int, guild_id: int, amount: int) -> bool:
+        if amount <= 0:
+            return True
+
+        await self.get_or_create_user(user_id, guild_id)
+
+        async with self.db.execute(
+            """
+            UPDATE users
+            SET crystals = crystals - ?
+            WHERE user_id = ? AND guild_id = ? AND crystals >= ?
+            """,
+            (amount, user_id, guild_id, amount)
+        ) as cursor:
+            await self.db.commit()
+            return cursor.rowcount > 0
+
+    async def try_spend(self, user_id: int, guild_id: int, amount: int, currency: str) -> bool:
+        """Списание в любой валюте: 'coins' | 'crystals'."""
+        if currency == "crystals":
+            return await self.try_spend_crystals(user_id, guild_id, amount)
+        return await self.try_spend_coins(user_id, guild_id, amount)
+
+    async def award_currency(self, user_id: int, guild_id: int, amount: int, currency: str):
+        """Выдача в любой валюте: 'coins' | 'crystals'."""
+        amount = int(amount)
+        if amount <= 0:
+            return
+        await self.get_or_create_user(user_id, guild_id)
+        column = "crystals" if currency == "crystals" else "coins"
+        await self.db.execute(
+            f"UPDATE users SET {column} = {column} + ? WHERE user_id = ? AND guild_id = ?",
+            (amount, user_id, guild_id)
+        )
+        await self.db.commit()
+
+    # ===== Эффекты (роль-баффы в инвентаре, role_type='effect') =====
+
+    async def has_effect(self, user_id: int, guild_id: int, effect: str) -> bool:
+        row = await self._fetchone(
+            """
+            SELECT COUNT(*) AS count
+            FROM inventory
+            WHERE user_id = ? AND guild_id = ? AND role_type = 'effect'
+              AND rarity = ? AND is_applied = 1
+            """,
+            (user_id, guild_id, effect)
+        )
+        return bool(row and row["count"] > 0)
+
+    async def add_effect_to_inventory(self, user_id: int, guild_id: int, effect: str) -> int:
+        """Добавляет эффект в инвентарь. -1, если такой эффект уже есть."""
+        if await self.has_effect(user_id, guild_id, effect):
+            return -1
+
+        role_id = EFFECT_ROLE_IDS.get(effect, 2999)
+
+        async with self.db.execute(
+            """
+            INSERT INTO inventory
+            (user_id, guild_id, role_id, role_type, rarity, level, is_applied)
+            VALUES (?, ?, ?, 'effect', ?, 1, 1)
+            """,
+            (user_id, guild_id, role_id, effect)
+        ) as cursor:
+            await self.db.commit()
+            return cursor.lastrowid
+
+    async def get_user_effects(self, user_id: int, guild_id: int) -> List[str]:
+        rows = await self._fetchall(
+            """
+            SELECT rarity
+            FROM inventory
+            WHERE user_id = ? AND guild_id = ? AND role_type = 'effect' AND is_applied = 1
+            ORDER BY id
+            """,
+            (user_id, guild_id)
+        )
+        return [row["rarity"] for row in rows]
+
+    # ===== Ежедневная награда =====
+
+    async def claim_daily(self, user_id: int, guild_id: int, amount: int) -> Dict[str, Any]:
+        """Атомарная выдача /daily: вернёт success=False, если уже получено сегодня."""
+        await self.get_or_create_user(user_id, guild_id)
+        now = int(time.time())
+
+        async with self.db.execute(
+            """
+            UPDATE users
+            SET last_daily = ?, coins = coins + ?
+            WHERE user_id = ? AND guild_id = ? AND COALESCE(last_daily, 0) <= ?
+            """,
+            (now, amount, user_id, guild_id, now - 86400)
+        ) as cursor:
+            await self.db.commit()
+            if cursor.rowcount == 0:
+                user = await self.get_or_create_user(user_id, guild_id)
+                cooldown_left = 86400 - (now - (user.get("last_daily") or 0))
+                return {"success": False, "cooldown_left": max(0, int(cooldown_left))}
+            return {"success": True, "amount": amount}
 
     async def update_crystals(self, user_id: int, guild_id: int, amount: int) -> int:
         await self.get_or_create_user(user_id, guild_id)
@@ -718,7 +913,9 @@ class Database:
         case_id: int,
         name: str = None,
         case_price: int = None,
-        key_price: int = None
+        key_price: int = None,
+        case_crystal_price: int = None,
+        key_crystal_price: int = None
     ) -> bool:
         case = await self._fetchone("SELECT * FROM cases WHERE id = ?", (case_id,))
 
@@ -728,20 +925,25 @@ class Database:
         new_name = case["name"] if name is None else name.strip()
         new_case_price = case["case_price"] if case_price is None else case_price
         new_key_price = case["key_price"] if key_price is None else key_price
+        new_case_crystals = case.get("case_crystal_price", 0) if case_crystal_price is None else case_crystal_price
+        new_key_crystals = case.get("key_crystal_price", 0) if key_crystal_price is None else key_crystal_price
 
         if not new_name:
             return False
 
-        if new_case_price < 0 or new_key_price < 0:
+        prices = (new_case_price, new_key_price, new_case_crystals, new_key_crystals)
+        if any(p < 0 for p in prices):
             return False
 
         await self.db.execute(
             """
             UPDATE cases
-            SET name = ?, case_price = ?, key_price = ?
+            SET name = ?, case_price = ?, key_price = ?,
+                case_crystal_price = ?, key_crystal_price = ?
             WHERE id = ?
             """,
-            (new_name, new_case_price, new_key_price, case_id)
+            (new_name, new_case_price, new_key_price,
+             new_case_crystals, new_key_crystals, case_id)
         )
         await self.db.commit()
         return True
@@ -1015,9 +1217,21 @@ class Database:
             await self.add_case(user_id, guild_id, case_id, 1)
             return {"success": False, "error": "Не удалось использовать ключ."}
 
-        debuff_applied = False
+        # Записываем историю открытия (для вкладок «Кейсы»/статистики в инвентаре)
+        await self.db.execute(
+            """
+            INSERT INTO case_open_history (user_id, guild_id, case_id, role_id, rarity)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, guild_id, case_id, reward["role_id"], reward["rarity"])
+        )
+        await self.db.commit()
 
-        if random.random() < 0.05:
+        # Дебафф «Кривая рука»: 25% шанс, если нет эффекта-щита
+        debuff_applied = False
+        has_shield = await self.has_effect(user_id, guild_id, "shield")
+
+        if not has_shield and random.random() < 0.25:
             debuff_result = await self.add_debuff_to_inventory(user_id, guild_id, "clumsy_hands")
 
             if debuff_result != -1:
@@ -1065,10 +1279,14 @@ class Database:
         seller_id: int,
         guild_id: int,
         inventory_id: int,
-        price: int
+        price: int,
+        currency: str = "coins"
     ) -> Dict[str, Any]:
         if price <= 0:
             return {"success": False, "error": "Цена должна быть больше 0."}
+
+        if currency not in ("coins", "crystals"):
+            return {"success": False, "error": "Неверная валюта."}
 
         item = await self.get_inventory_item(inventory_id, seller_id, guild_id)
 
@@ -1097,10 +1315,10 @@ class Database:
 
         async with self.db.execute(
             """
-            INSERT INTO market_listings (seller_id, guild_id, inventory_id, price)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO market_listings (seller_id, guild_id, inventory_id, price, currency)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (seller_id, guild_id, inventory_id, price)
+            (seller_id, guild_id, inventory_id, price, currency)
         ) as cursor:
             await self.db.commit()
             listing_id = cursor.lastrowid
@@ -1135,6 +1353,8 @@ class Database:
         if not listing or listing["is_sold"]:
             return {"success": False, "error": "Лот не найден или уже продан."}
 
+        currency = listing.get("currency", "coins") or "coins"
+
         item = await self.get_inventory_item(
             listing["inventory_id"],
             listing["seller_id"],
@@ -1150,22 +1370,27 @@ class Database:
         await self.get_or_create_user(buyer_id, listing["guild_id"])
         await self.get_or_create_user(listing["seller_id"], listing["guild_id"])
 
-        if not await self.try_spend_coins(buyer_id, listing["guild_id"], listing["price"]):
-            return {"success": False, "error": "Недостаточно монет."}
+        if not await self.try_spend(buyer_id, listing["guild_id"], listing["price"], currency):
+            return {
+                "success": False,
+                "error": "Недостаточно кристаллов." if currency == "crystals" else "Недостаточно монет."
+            }
 
         async with self.db.execute(
             "UPDATE market_listings SET is_sold = 1 WHERE id = ? AND is_sold = 0",
             (listing_id,)
         ) as cursor:
             if cursor.rowcount == 0:
-                await self.update_coins(buyer_id, listing["guild_id"], listing["price"])
+                await self.award_currency(buyer_id, listing["guild_id"], listing["price"], currency)
                 await self.db.commit()
                 return {"success": False, "error": "Лот уже продан."}
 
         commission = int(listing["price"] * 0.05)
         seller_revenue = listing["price"] - commission
 
-        await self.update_coins(listing["seller_id"], listing["guild_id"], seller_revenue)
+        await self.award_currency(
+            listing["seller_id"], listing["guild_id"], seller_revenue, currency
+        )
 
         was_applied = bool(item["is_applied"])
 
@@ -1181,7 +1406,8 @@ class Database:
             "commission": commission,
             "seller_revenue": seller_revenue,
             "was_applied": was_applied,
-            "role_id": item["role_id"]
+            "role_id": item["role_id"],
+            "currency": currency
         }
 
     async def cancel_market_listing(self, seller_id: int, listing_id: int) -> bool:

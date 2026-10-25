@@ -17,6 +17,7 @@ from discord import ui
 
 from database import db
 from .shared import check_cooldown, get_rarity_name
+from .shop import _safe_send
 from .persistent_utils import make_id, edit_view
 
 WHEEL_COOLDOWN = 3600  # 1 час
@@ -238,6 +239,7 @@ def _rewards_text() -> str:
 
 def register(bot):
     @bot.tree.command(name="wheel", description="Крутить почасовое колесо 🎡")
+    @_safe_send
     async def wheel(interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)
@@ -263,6 +265,7 @@ def register(bot):
         )
 
     @bot.tree.command(name="wheel_info", description="Посмотреть награды почасового колеса")
+    @_safe_send
     async def wheel_info(interaction: discord.Interaction):
         embed = discord.Embed(
             title="🎡 Награды почасового колеса",

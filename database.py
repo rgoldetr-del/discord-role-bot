@@ -722,10 +722,10 @@ class Database:
         if not rows:  # совместимость со старыми БД: поиск по имени
             rows = await self._fetchall(
                 "SELECT id, name FROM cases WHERE guild_id = ? AND is_active = 1 AND name LIKE ?",
-                (guild_id, f"%{FREE_CASE_NAME.split(' ', 1)[-1]}%")
+                (guild_id, "%Стартовый%")
             )
         if not rows:
-            return {"success": False, "error": "Бесплатный кейс не настроен админом."}
+            return {"success": False, "error": "Бесплатный кейс не найден. Админ: /admin → 🛠 Кейсы → ⚡ Готовые пресеты."}
         case = rows[0]
 
         async with self.db.execute(

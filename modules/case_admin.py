@@ -501,9 +501,18 @@ class CaseAdminListView(ui.View):
         existing_names = {r.name for r in interaction.guild.roles}
 
         for preset in PRESET_CASES:
+            total_chance = sum(r["chance"] for r in preset["rarities"])
+            if total_chance != 100:
+                # добавляем недостающий шанс в обычную редкость — иначе кейс не активируется
+                for r in preset["rarities"]:
+                    if r["rarity"] == "common":
+                        r["chance"] += 100 - total_chance
+                        break
+
             case_id = await db.create_case_return_id(
                 interaction.guild.id, preset["name"], preset["case_rarity"],
-                preset["case_price"], preset["key_price"])
+                preset["case_price"], preset["key_price"],
+                is_free=1 if preset.get("free") else 0)
 
             for rarity in preset["rarities"]:
                 rarity_id = await db.add_rarity_return_id(

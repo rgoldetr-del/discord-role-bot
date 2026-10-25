@@ -12,6 +12,7 @@ from discord import ui
 
 from database import db
 from .shared import (
+from .shop import _safe_send
     BET_VALUE_EQUIV,
     mixed_value,
     try_spend_mixed,
@@ -1134,6 +1135,7 @@ async def create_pvp_blackjack(interaction: discord.Interaction, bet_coins: int,
 
 def register(bot):
     @bot.tree.command(name="games", description="Все мини-игры")
+    @_safe_send
     async def games(interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)

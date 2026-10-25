@@ -13,6 +13,7 @@ from discord.ext import tasks
 
 from database import db
 from .shared import (
+from .shop import _safe_send
     check_cooldown,
     can_manage,
     get_rarity_emoji,
@@ -215,6 +216,7 @@ def register(bot):
         pass
 
     @bot.tree.command(name="auction", description="Посмотреть активные аукционы")
+    @_safe_send
     async def auction(interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)
@@ -234,6 +236,7 @@ def register(bot):
 
     
     @bot.tree.command(name="auction_finish", description="[Админ] Проверить и завершить истёкшие аукционы")
+    @_safe_send
     async def auction_finish(interaction: discord.Interaction):
         if not interaction.guild or not can_manage(interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)

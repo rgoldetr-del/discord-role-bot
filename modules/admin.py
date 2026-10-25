@@ -323,6 +323,7 @@ def register(bot):
         pass
 
     @bot.tree.command(name="admin", description="Единая админ-панель: кейсы, выдача, сбросы")
+    @_safe_send
     async def admin(interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)

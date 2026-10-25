@@ -29,96 +29,9 @@ RARITY_NAMES = {
 }
 
 
-PRESET_CASES = [
-    {
-        "name": "🌱 Стартовый",
-        "case_rarity": "common",
-        "case_price": 50,
-        "key_price": 20,
-        "rarities": [
-            {"rarity": "common", "chance": 55, "price": 25, "roles": ["🌱 Саженец"]},
-            {"rarity": "uncommon", "chance": 30, "price": 60, "roles": ["🌿 Росток"]},
-            {"rarity": "rare", "chance": 12, "price": 150, "roles": ["🌳 Дуб"]},
-            {"rarity": "epic", "chance": 3, "price": 400, "roles": ["🌲 Мировое дерево"]},
-        ]
-    },
-    {
-        "name": "🌿 Лесной",
-        "case_rarity": "uncommon",
-        "case_price": 250,
-        "key_price": 100,
-        "rarities": [
-            {"rarity": "common", "chance": 45, "price": 80, "roles": ["🌻 Подсолнух"]},
-            {"rarity": "uncommon", "chance": 30, "price": 200, "roles": ["🌸 Цветущая вишня"]},
-            {"rarity": "rare", "chance": 18, "price": 500, "roles": ["🍁 Клён"]},
-            {"rarity": "epic", "chance": 6, "price": 1500, "roles": ["🌺 Орхидея"]},
-            {"rarity": "legendary", "chance": 1, "price": 8000, "roles": ["🌲 Древний лес"]},
-        ]
-    },
-    {
-        "name": "⚔️ Рыцарский",
-        "case_rarity": "rare",
-        "case_price": 800,
-        "key_price": 300,
-        "rarities": [
-            {"rarity": "common", "chance": 40, "price": 200, "roles": ["🗡️ Оруженосец"]},
-            {"rarity": "uncommon", "chance": 30, "price": 500, "roles": ["🏹 Лучник"]},
-            {"rarity": "rare", "chance": 20, "price": 1500, "roles": ["⚔️ Рыцарь"]},
-            {"rarity": "epic", "chance": 8, "price": 4000, "roles": ["🛡️ Паладин"]},
-            {"rarity": "legendary", "chance": 2, "price": 25000, "roles": ["👑 Король рыцарей"]},
-        ]
-    },
-    {
-        "name": "🏰 Королевский",
-        "case_rarity": "epic",
-        "case_price": 2500,
-        "key_price": 1000,
-        "rarities": [
-            {"rarity": "uncommon", "chance": 35, "price": 800, "roles": ["🏰 Лорд"]},
-            {"rarity": "rare", "chance": 30, "price": 2500, "roles": ["👑 Принц"]},
-            {"rarity": "epic", "chance": 20, "price": 8000, "roles": ["🏛️ Герцог"]},
-            {"rarity": "legendary", "chance": 12, "price": 25000, "roles": ["⚜️ Император"]},
-            {"rarity": "secret", "chance": 3, "price": 150000, "roles": ["🦅 Грифон"]},
-        ]
-    },
-    {
-        "name": "🌌 Космический",
-        "case_rarity": "legendary",
-        "case_price": 8000,
-        "key_price": 3000,
-        "rarities": [
-            {"rarity": "rare", "chance": 35, "price": 3500, "roles": ["🌙 Луна"]},
-            {"rarity": "epic", "chance": 30, "price": 12000, "roles": ["🪐 Сатурн"]},
-            {"rarity": "legendary", "chance": 22, "price": 40000, "roles": ["☀️ Солнце"]},
-            {"rarity": "secret", "chance": 10, "price": 200000, "roles": ["🌌 Млечный путь"]},
-            {"rarity": "secret+", "chance": 3, "price": 1500000, "roles": ["🕳️ Чёрная дыра"]},
-        ]
-    },
-    {
-        "name": "👑 Императорский",
-        "case_rarity": "secret",
-        "case_price": 25000,
-        "key_price": 10000,
-        "rarities": [
-            {"rarity": "epic", "chance": 40, "price": 20000, "roles": ["👼 Архангел"]},
-            {"rarity": "legendary", "chance": 35, "price": 60000, "roles": ["😈 Архидемон"]},
-            {"rarity": "secret", "chance": 20, "price": 300000, "roles": ["🐉 Древний дракон"]},
-            {"rarity": "secret+", "chance": 5, "price": 2500000, "roles": ["⚡ Зевс"]},
-        ]
-    },
-    {
-        "name": "⚫ Абсолютный",
-        "case_rarity": "secret+",
-        "case_price": 100000,
-        "key_price": 40000,
-        "rarities": [
-            {"rarity": "legendary", "chance": 40, "price": 50000, "roles": ["🌟 Созвездие"]},
-            {"rarity": "secret", "chance": 40, "price": 400000, "roles": ["🌀 Сингулярность"]},
-            {"rarity": "secret+", "chance": 20, "price": 5000000, "roles": ["🌌✨ Творец вселенной"]},
-        ]
-    },
-]
-
+# Пресеты переехали в presets_data.py (Terraria-тематика). Здесь — алиас,
+# чтобы не дублировать данные и не ломать импорты case_admin.
+from .presets_data import PRESET_CASES  # noqa: F401
 
 from .shared import can_manage
 

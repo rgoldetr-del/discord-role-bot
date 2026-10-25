@@ -4,11 +4,15 @@
 # 🔄 Сброс кулдаунов колеса/дейли.
 # Все прежние разрозненные админ-команды (/give_*, /reset_*) свёрнуты в это меню.
 
+import logging
+
 import discord
 from discord import ui
 
 from database import db
 from .shared import can_manage
+
+log = logging.getLogger(__name__)
 
 
 def find_member(guild: discord.Guild, interaction_msg, raw: str):
@@ -107,11 +111,11 @@ class GiveMenu(ui.View):
         await interaction.response.send_modal(GiveItemModal(interaction.guild, kind, item_id))
 
     @ui.button(label="💰 Монеты", style=discord.ButtonStyle.success, custom_id="adm:give:coins")
-    async def give_coins(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def give_coins(self, button, interaction: discord.Interaction):
         await self._open_modal(interaction, "coins")
 
     @ui.button(label="💎 Кристаллы", style=discord.ButtonStyle.primary, custom_id="adm:give:crystals")
-    async def give_crystals(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def give_crystals(self, button, interaction: discord.Interaction):
         await self._open_modal(interaction, "crystals")
 
     @ui.select(placeholder="📦 Выдать кейс…", custom_id="adm:give:case_sel")
@@ -131,10 +135,34 @@ class GiveMenu(ui.View):
             child.disabled = True
 
 
+async def _safe_send(interaction: discord.Interaction, content=None, *, embed=None, view=None, ephemeral=True):
+    """Ответ на интеракцию с защитой от 404 Unknown interaction (просроченный токен)."""
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=ephemeral)
+        else:
+            await interaction.response.send_message(content=content, embed=embed, view=view, ephemeral=ephemeral)
+    except discord.NotFound:
+        log.warning("Интеракция устарела (404) — ответ пропущен")
+    except discord.HTTPException:
+        log.warning("Не удалось отправить ответ", exc_info=True)
+
+
+async def _safe_edit(interaction: discord.Interaction, *, content=None, embed=None, view=None):
+    try:
+        if interaction.response.is_done():
+            await interaction.message.edit(content=content, embed=embed, view=view)
+        else:
+            await interaction.response.edit_message(content=content, embed=embed, view=view)
+    except discord.NotFound:
+        log.warning("Интеракция устарела (404) — редактирование пропущено")
+    except discord.HTTPException:
+        log.warning("Не удалось отредактировать сообщение", exc_info=True)
+
 async def show_main_menu(interaction: discord.Interaction):
     embed = discord.Embed(title="🛡 Панель администратора", color=0xE74C3C, description=_main_desc())
-    await interaction.response.edit_message(
-        content=None, embed=embed, view=AdminMainView(interaction.user.id, interaction.guild.id))
+    await _safe_edit(interaction, content=None, embed=embed,
+                     view=AdminMainView(interaction.user.id, interaction.guild.id))
 
 
 def _main_desc():
@@ -153,10 +181,11 @@ class AdminMainView(ui.View):
         self.user_id = user_id
         self.guild_id = guild_id
 
-    def check_owner(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id == self.user_id and can_manage(interaction)
+    @staticmethod
+    def _is_owner(user_id: int, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == user_id and can_manage(interaction)
 
-    async def _respond_denied(self, interaction: discord.Interaction):
+    async def _respond_denied(self, button, interaction: discord.Interaction):
         try:
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
         except discord.HTTPException:
@@ -164,11 +193,11 @@ class AdminMainView(ui.View):
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item):
         # защитный обработчик: не «глушить» view при ошибке кнопки
-        print(f"[admin view error] {error!r}")
+        log.exception("Ошибка кнопки админ-панели", exc_info=error)
 
     @ui.button(label="🛠 Кейсы", style=discord.ButtonStyle.primary, custom_id="adm:cases")
-    async def cases_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
-        if not AdminMainView.check_owner(self, interaction):
+    async def cases_btn(self, button, interaction: discord.Interaction):
+        if not self._is_owner(self.user_id, interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
             return
         from .case_admin import CaseAdminListView
@@ -178,8 +207,8 @@ class AdminMainView(ui.View):
         await interaction.response.edit_message(content=None, embed=None, view=panel)
 
     @ui.button(label="🎁 Выдать", style=discord.ButtonStyle.success, custom_id="adm:give")
-    async def give_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
-        if not AdminMainView.check_owner(self, interaction):
+    async def give_btn(self, button, interaction: discord.Interaction):
+        if not self._is_owner(self.user_id, interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
             return
         cases = [dict(c) for c in await db.get_all_cases(self.guild_id, active_only=False)]
@@ -193,13 +222,13 @@ class AdminMainView(ui.View):
         view.give_case_sel.options = case_opts
         view.give_key_sel.options = case_opts
         view.give_effect_sel.options = eff_opts
-        await interaction.response.edit_message(
-            content="🎁 **Что выдать?** Кнопки — валюта, списки — предметы.",
-            embed=None, view=view)
+        await _safe_edit(interaction,
+                         content="🎁 **Что выдать?** Кнопки — валюта, списки — предметы.",
+                         embed=None, view=view)
 
     @ui.button(label="🔄 Сброс", style=discord.ButtonStyle.danger, custom_id="adm:reset")
-    async def reset_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
-        if not AdminMainView.check_owner(self, interaction):
+    async def reset_btn(self, button, interaction: discord.Interaction):
+        if not self._is_owner(self.user_id, interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
             return
 
@@ -270,5 +299,5 @@ def register(bot):
             color=0xE74C3C,
         )
         embed.set_footer(text=f"Запросил: {interaction.user.display_name}")
-        await interaction.response.send_message(
-            embed=embed, view=AdminMainView(interaction.user.id, interaction.guild.id), ephemeral=True)
+        await _safe_send(interaction, embed=embed,
+                         view=AdminMainView(interaction.user.id, interaction.guild.id))

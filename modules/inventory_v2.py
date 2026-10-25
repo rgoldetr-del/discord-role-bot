@@ -468,7 +468,7 @@ class InventoryV2View(ui.View):
 
     def render_roles_block(self, guild, items) -> str:
         if not items:
-            return "_Список пуст. Открой кейс командой `/case_open`!_"
+            return "_Список пуст. Купи кейс в `/shop` и открой его кнопкой «🔓 Открыть» здесь._"
 
         lines = ["**🎭 Роли — нажми кнопку, чтобы посмотреть детали:**", ""]
 
@@ -495,7 +495,7 @@ class InventoryV2View(ui.View):
             )
 
         lines.append("")
-        lines.append("_Открыть: `/case_open` • Купить: `/case_shop`_")
+        lines.append("_Открыть — кнопкой «🔓 Открыть», купить — в `/shop`_")
         return "\n".join(lines)
 
     def render_upgrades_block(self, guild, items) -> str:
@@ -513,14 +513,14 @@ class InventoryV2View(ui.View):
         lines.append(f"💰 **Богач** — уровень **{rich}** (+{rich}% к выигрышам)")
         lines.append(f"   Следующий уровень: **{next_rich} 💰**")
         lines.append("")
-        lines.append("_Купить: `/buy_upgrade`_")
+        lines.append("_Купить: `/shop → 🍀 Улучшения`_")
         return "\n".join(lines)
 
     def render_effects_block(self, items) -> str:
         if not items:
             return (
                 "**✨ Эффекты** дают пассивные бонусы.\n"
-                "Магазин эффектов: `/effect_shop` (покупка за кристаллы)."
+                "Магазин эффектов: `/shop → ✨ Эффекты` (покупка за кристаллы)."
             )
 
         lines = ["**✨ Активные эффекты:**", ""]

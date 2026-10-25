@@ -484,7 +484,7 @@ class CaseAdminListView(ui.View):
         await self.refresh(interaction)
 
     @ui.button(label="⚡ Готовые пресеты", style=discord.ButtonStyle.primary, custom_id="ca:preset")
-    async def preset_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def preset_btn(self, button, interaction: discord.Interaction):
         """Создать 7 готовых кейсов с редкостями и ролями (из старого /case_preset_full)."""
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)
@@ -541,7 +541,7 @@ class CaseAdminListView(ui.View):
         await interaction.followup.send("Готово:\n" + "\n".join(lines), ephemeral=True)
 
     @ui.button(label="🤖 Роли для всех кейсов", style=discord.ButtonStyle.secondary, custom_id="ca:genall")
-    async def gen_all_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def gen_all_btn(self, button, interaction: discord.Interaction):
         """Сгенерировать недостающие роли для всех кейсов (из старого /gen_all_case_roles)."""
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)

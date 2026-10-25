@@ -21,6 +21,9 @@ from .shared import (
 
 log = logging.getLogger(__name__)
 
+# bot передаётся в register(); нужен фоновой задаче auction_loop
+_active_bot = None
+
 
 def fmt_time_left(end_ts: int) -> str:
     left = max(0, end_ts - int(time.time()))
@@ -177,6 +180,19 @@ async def deliver_to_user(bot, member, guild, text):
             await ch.send(f"{member.mention} {text}", allowed_mentions=discord.AllowedMentions.none())
 
 
+# Фоновая задача авто-завершения аукционов (запускается из main.py в on_ready).
+# Объявлена на уровне модуля, чтобы import auction_loop работал без вызова register().
+@tasks.loop(hours=1)
+async def auction_loop():
+    bot = _active_bot
+    if bot is None:
+        return
+    try:
+        await finalize_due_auctions(bot)
+    except Exception:
+        log.warning("Ошибка авто-завершения аукционов", exc_info=True)
+
+
 class AuctionRefreshButton(ui.Button):
     def __init__(self):
         super().__init__(style=discord.ButtonStyle.secondary, label="🔄 Обновить",
@@ -189,6 +205,9 @@ class AuctionRefreshButton(ui.Button):
 
 
 def register(bot):
+    global _active_bot
+    _active_bot = bot
+
     # Старая команда ставок больше не нужна — ставки делаются кнопкой.
     try:
         bot.tree.remove_command("auction_bid")
@@ -227,11 +246,4 @@ def register(bot):
             f"✅ Завершено аукционов: {before - after}. Активных осталось: {after}.",
             ephemeral=True,
         )
-
-    @tasks.loop(hours=1)
-    async def auction_loop():
-        try:
-            await finalize_due_auctions(bot)
-        except Exception:
-            log.warning("Ошибка авто-завершения аукционов", exc_info=True)
 

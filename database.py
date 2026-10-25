@@ -14,7 +14,8 @@ DB_PATH = "bot_database.db"
 
 # ===== Эффекты (баффы, покупаемые в /shop и хранящиеся в инвентаре) =====
 
-# Эффекты действуют 1 час после покупки (inventory.effect_expires_at).
+# Эффекты действуют 1 час после покупки (inventory.effect_expires_at)
+# и покупаются за монеты.
 # Роли-улучшения («Удача», «Богач») — бессрочные (role_type='upgradeable').
 EFFECT_DURATION = 3600  # 1 час
 
@@ -41,7 +42,7 @@ EFFECTS = {
     },
     "crystal_guard": {
         "name": "💎 Хранитель кристаллов", "emoji": "💎",
-        "description": "15% шанс не потерять кристаллы при проигрыше. Действует 1 час.",
+        "description": "15% шанс вернуть кристаллы при проигрыше в мини-играх. Действует 1 час.",
         "price": 1800, "currency": "coins",
     },
     "high_roller": {
@@ -88,18 +89,19 @@ class Database:
         case_price: int,
         key_price: int,
         case_crystal_price: int = 0,
-        key_crystal_price: int = 0
+        key_crystal_price: int = 0,
+        is_free: int = 0
     ) -> int:
-        """Создать кейс и вернуть его ID."""
+        """Создать кейс и вернуть его ID. is_free=1 — бесплатный кейс (раз в час)."""
         async with self.db.execute(
             """
             INSERT INTO cases
                 (guild_id, name, case_rarity, case_price, key_price,
-                 case_crystal_price, key_crystal_price, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                 case_crystal_price, key_crystal_price, is_active, is_free)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
             """,
             (guild_id, name, case_rarity, case_price, key_price,
-             case_crystal_price, key_crystal_price)
+             case_crystal_price, key_crystal_price, 1 if is_free else 0)
         ) as cursor:
             await self.db.commit()
             return cursor.lastrowid
@@ -180,6 +182,7 @@ class Database:
                 case_crystal_price INTEGER DEFAULT 0,
                 key_crystal_price INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 0,
+                is_free INTEGER DEFAULT 0,
                 created_at INTEGER DEFAULT (strftime('%s', 'now'))
             );
 
@@ -418,6 +421,7 @@ class Database:
 
         await _add_column("users", "last_daily", "INTEGER DEFAULT 0")
         await _add_column("users", "last_free_case", "INTEGER DEFAULT 0")
+        await _add_column("cases", "is_free", "INTEGER DEFAULT 0")
         await _add_column("inventory", "effect_expires_at", "INTEGER DEFAULT 0")
         await _add_column("cases", "case_crystal_price", "INTEGER DEFAULT 0")
         await _add_column("cases", "key_crystal_price", "INTEGER DEFAULT 0")
@@ -579,6 +583,25 @@ class Database:
 
     # ===== Эффекты (роль-баффы в инвентаре, role_type='effect') =====
 
+    async def roll_effect(self, effect: str, chance: float) -> bool:
+        """Шанс срабатывания эффекта (используется в мини-играх)."""
+        import random as _r
+        return _r.random() < chance
+
+    async def maybe_refund_crystals_on_loss(
+        self, user_id: int, guild_id: int, lost_crystals: int
+    ) -> int:
+        """Эффект «Хранитель кристаллов»: 15% шанс вернуть ставку кристаллами при проигрыше."""
+        if lost_crystals <= 0:
+            return 0
+        if not await self.has_effect(user_id, guild_id, "crystal_guard"):
+            return 0
+        import random as _r
+        if _r.random() < 0.15:
+            await self.update_crystals(user_id, guild_id, lost_crystals)
+            return lost_crystals
+        return 0
+
     async def has_effect(self, user_id: int, guild_id: int, effect: str) -> bool:
         """Эффект активен, если куплен и не истёк (действует EFFECT_DURATION = 1 час)."""
         now = int(time.time())
@@ -683,6 +706,58 @@ class Database:
         """Админ: сбросить кулдаун колеса игроку."""
         await self.db.execute(
             "UPDATE users SET last_wheel_time = 0 WHERE user_id = ? AND guild_id = ?",
+            (user_id, guild_id),
+        )
+        await self.db.commit()
+
+    async def claim_free_case(self, user_id: int, guild_id: int) -> Dict[str, Any]:
+        """Бесплатный кейс «🌱 Стартовый»: 1 раз в час. Атомарно."""
+        await self.get_or_create_user(user_id, guild_id)
+        now = int(time.time())
+
+        rows = await self._fetchall(
+            "SELECT id, name FROM cases WHERE guild_id = ? AND is_active = 1 AND is_free = 1",
+            (guild_id,)
+        )
+        if not rows:  # совместимость со старыми БД: поиск по имени
+            rows = await self._fetchall(
+                "SELECT id, name FROM cases WHERE guild_id = ? AND is_active = 1 AND name LIKE ?",
+                (guild_id, f"%{FREE_CASE_NAME.split(' ', 1)[-1]}%")
+            )
+        if not rows:
+            return {"success": False, "error": "Бесплатный кейс не настроен админом."}
+        case = rows[0]
+
+        async with self.db.execute(
+            """
+            UPDATE users
+            SET last_free_case = ?
+            WHERE user_id = ? AND guild_id = ? AND COALESCE(last_free_case, 0) <= ?
+            """
+            ,
+            (now, user_id, guild_id, now - 3600)
+        ) as cursor:
+            await self.db.commit()
+            if cursor.rowcount == 0:
+                user = await self.get_or_create_user(user_id, guild_id)
+                left = 3600 - (now - (user.get("last_free_case") or 0))
+                return {"success": False, "cooldown_left": max(0, int(left))}
+
+        ok = await self.add_case(user_id, guild_id, case["id"], 1)
+        if not ok:
+            await self.reset_free_case(user_id, guild_id)
+            return {"success": False, "error": "Достигнут лимит хранения (50 шт.)."}
+        return {"success": True, "case_id": case["id"], "case_name": case["name"]}
+
+    async def free_case_cooldown_left(self, user_id: int, guild_id: int) -> int:
+        await self.get_or_create_user(user_id, guild_id)
+        user = await self.get_or_create_user(user_id, guild_id)
+        left = 3600 - (int(time.time()) - (user.get("last_free_case") or 0))
+        return max(0, int(left))
+
+    async def reset_free_case(self, user_id: int, guild_id: int):
+        await self.db.execute(
+            "UPDATE users SET last_free_case = 0 WHERE user_id = ? AND guild_id = ?",
             (user_id, guild_id),
         )
         await self.db.commit()
@@ -1034,7 +1109,8 @@ class Database:
         case_price: int = None,
         key_price: int = None,
         case_crystal_price: int = None,
-        key_crystal_price: int = None
+        key_crystal_price: int = None,
+        is_free: int = None
     ) -> bool:
         case = await self._fetchone("SELECT * FROM cases WHERE id = ?", (case_id,))
 
@@ -1058,11 +1134,12 @@ class Database:
             """
             UPDATE cases
             SET name = ?, case_price = ?, key_price = ?,
-                case_crystal_price = ?, key_crystal_price = ?
+                case_crystal_price = ?, key_crystal_price = ?,
+                is_free = COALESCE(?, is_free)
             WHERE id = ?
             """,
             (new_name, new_case_price, new_key_price,
-             new_case_crystals, new_key_crystals, case_id)
+             new_case_crystals, new_key_crystals, is_free, case_id)
         )
         await self.db.commit()
         return True
@@ -1276,7 +1353,7 @@ class Database:
         )
         return row["quantity"] if row else 0
 
-    async def get_random_role_from_case(self, case_id: int) -> Optional[Dict[str, Any]]:
+    async def get_random_role_from_case(self, case_id: int, luck_bonus: int = 0) -> Optional[Dict[str, Any]]:
         case_details = await self.get_case_details(case_id)
 
         if not case_details:
@@ -1290,7 +1367,14 @@ class Database:
         if not rarities:
             return None
 
-        weights = [max(0, float(rarity["drop_chance"])) for rarity in rarities]
+        # «Удача» (бессрочное улучшение): +1% к весу каждой редкости выше common за уровень.
+        order = ["common", "uncommon", "rare", "epic", "legendary", "secret", "secret+"]
+        weights = []
+        for rarity in rarities:
+            w = max(0.0, float(rarity["drop_chance"]))
+            if luck_bonus > 0 and rarity["rarity"] in order[2:]:
+                w *= 1.0 + luck_bonus / 100.0
+            weights.append(w)
 
         if sum(weights) <= 0:
             return None
@@ -1324,7 +1408,10 @@ class Database:
         if key_amount < 1:
             return {"success": False, "error": "У тебя нет ключа для этого кейса."}
 
-        reward = await self.get_random_role_from_case(case_id)
+        luck_level = await self.get_upgradeable_role_level(user_id, guild_id, "luck")
+        if await self.has_effect(user_id, guild_id, "luck_charm"):
+            luck_level += 10  # эффект «Талисман удачи»: +10% к редким на 1 час
+        reward = await self.get_random_role_from_case(case_id, luck_bonus=luck_level)
 
         if not reward:
             return {"success": False, "error": "В кейсе нет доступных ролей."}

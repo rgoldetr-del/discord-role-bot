@@ -541,7 +541,7 @@ class CaseAdminListView(ui.View):
         await interaction.followup.send("Готово:\n" + "\n".join(lines), ephemeral=True)
 
     @ui.button(label="🤖 Роли для всех кейсов", style=discord.ButtonStyle.secondary, custom_id="ca:genall")
-    async def gen_all_btn(self, interaction: discord.Interaction, button):
+    async def gen_all_btn(self, interaction: discord.Interaction):
         """Сгенерировать недостающие роли для всех кейсов (из старого /gen_all_case_roles)."""
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)

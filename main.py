@@ -10,38 +10,87 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 # --- Совместимость UI-коллбэков с разными сборками discord.py -----------------
-# Официальный discord.py вызывает callback(interaction), форки на хостингах —
-# callback(interaction, item). Шим определяет настоящий Interaction по типу
-# аргументов и вызывает метод view в его сигнатуре (self, interaction[, button]).
+# Разные сборки по-разному вызывают коллбэк кнопки/селекта:
+#   официальный discord.py : item.callback(interaction), метод (self, inter[, item])
+#   форк хостинга           : item.callback(interaction, item) — без self!
+# Если библиотека передаёт (interaction, item), а метод объявлен как
+# (self, interaction), то в `self` попадает Button — отсюда падения вида
+# AttributeError: 'Button' object has no attribute 'user'.
+# Шим нормализует вызовы: методы всегда получают корректные
+# (self, interaction[, item]), независимо от порядка/состава аргументов.
 import inspect as _inspect
+from discord.ui.item import Item as _UIItem
 
 
-def _compat_callback(cb, parent):
+def _normalize_args(cb, default_parent, default_item, args):
+    """Привести args к сигнатуре метода коллбэка (self, interaction[, item])."""
     try:
         params = [p for p in _inspect.signature(cb).parameters.values()
                   if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
     except (ValueError, TypeError):
-        return cb
+        return args
+    n = len(params)
+    inter = next((a for a in args if isinstance(a, discord.Interaction)), None)
+    item = next((a for a in args if isinstance(a, _UIItem)), default_item)
 
-    async def wrapped(*args):
-        interaction = next((a for a in args if type(a).__name__ == "Interaction"), None)
-        n = len(params)
+    bound_self = getattr(cb, "__self__", None)
+    if bound_self is not None:      # bound method — self уже внутри
         if n >= 3:
-            item = next((a for a in args if isinstance(a, __import__("discord.ui", fromlist=["Item"]).Item)), None)
-            return await cb(parent, interaction, item)
+            return (bound_self, inter, item)
         if n == 2:
-            return await cb(parent, interaction)
-        return await cb(interaction)
+            return (bound_self, inter)
+        return (inter,)
 
-    return wrapped
+    # несвязанная функция из класса View: первый параметр self = parent view
+    if n >= 3:
+        return (default_parent, inter, item)
+    if n == 2:
+        return (default_parent, inter)
+    return (inter,)
 
 
+class _CompatItemCallback:
+    """Обёртка коллбэка Item (для сборок без _ItemCallback)."""
+
+    __slots__ = ("_cb", "_item")
+
+    def __init__(self, cb, item):
+        self._cb = cb
+        self._item = item
+
+    async def __call__(self, *args):
+        parent = self._item._view if self._item._view is not None else self._item._parent
+        real_args = _normalize_args(self._cb, parent, self._item, args)
+        return await self._cb(*real_args)
+
+
+# Патч вызова коллбэков. В discord.py 2.5+ для @ui.button/@ui.select коллбэк
+# хранится в item.callback как объект _ItemCallback, чей __call__ вызывает
+# метод с (parent, interaction, item) — лишние аргументы ломают методы,
+# объявленные как (self, interaction). Патчим __call__ этого класса: он теперь
+# сам подбирает аргументы под сигнатуру метода и принимает оба стиля вызова —
+# official: callback(interaction), форк: callback(interaction, item).
 try:
     from discord.ui.item import _ItemCallback as _IC
 
-    _IC.__call__ = lambda self, *args: _compat_callback(self.callback, self.parent)(*args)
-except Exception:  # на других сборках путь может отличаться — не критично
-    pass
+    def _ic_call(self, *args):
+        real_args = _normalize_args(self.callback, self.parent, self.item, args)
+        return self.callback(*real_args)
+
+    _IC.__call__ = _ic_call
+except ImportError:
+    # старые сборки: коллбэк лежит в item.callback напрямую — патчим setattr
+    _orig_setattr = _UIItem.__setattr__
+
+    def _item_setattr(self, name, value):
+        if name == "callback" and callable(value) and not isinstance(value, _CompatItemCallback):
+            value = _CompatItemCallback(value, self)
+        _orig_setattr(self, name, value)
+
+    _UIItem.__setattr__ = _item_setattr
+
+
+# Функция для ручного вызова (не используется автоматически):
 # -----------------------------------------------------------------------------
 
 from database import db

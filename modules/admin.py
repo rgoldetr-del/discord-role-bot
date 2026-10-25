@@ -111,11 +111,11 @@ class GiveMenu(ui.View):
         await interaction.response.send_modal(GiveItemModal(interaction.guild, kind, item_id))
 
     @ui.button(label="💰 Монеты", style=discord.ButtonStyle.success, custom_id="adm:give:coins")
-    async def give_coins(self, button, interaction: discord.Interaction):
+    async def give_coins(self, interaction: discord.Interaction, button):
         await self._open_modal(interaction, "coins")
 
     @ui.button(label="💎 Кристаллы", style=discord.ButtonStyle.primary, custom_id="adm:give:crystals")
-    async def give_crystals(self, button, interaction: discord.Interaction):
+    async def give_crystals(self, interaction: discord.Interaction, button):
         await self._open_modal(interaction, "crystals")
 
     @ui.select(placeholder="📦 Выдать кейс…", custom_id="adm:give:case_sel")
@@ -185,7 +185,7 @@ class AdminMainView(ui.View):
     def _is_owner(user_id: int, interaction: discord.Interaction) -> bool:
         return interaction.user.id == user_id and can_manage(interaction)
 
-    async def _respond_denied(self, button, interaction: discord.Interaction):
+    async def _respond_denied(self, interaction: discord.Interaction, button=None):
         try:
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
         except discord.HTTPException:
@@ -196,7 +196,7 @@ class AdminMainView(ui.View):
         log.exception("Ошибка кнопки админ-панели", exc_info=error)
 
     @ui.button(label="🛠 Кейсы", style=discord.ButtonStyle.primary, custom_id="adm:cases")
-    async def cases_btn(self, button, interaction: discord.Interaction):
+    async def cases_btn(self, interaction: discord.Interaction, button):
         if not self._is_owner(self.user_id, interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
             return
@@ -207,7 +207,7 @@ class AdminMainView(ui.View):
         await interaction.response.edit_message(content=None, embed=None, view=panel)
 
     @ui.button(label="🎁 Выдать", style=discord.ButtonStyle.success, custom_id="adm:give")
-    async def give_btn(self, button, interaction: discord.Interaction):
+    async def give_btn(self, interaction: discord.Interaction, button):
         if not self._is_owner(self.user_id, interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
             return
@@ -227,7 +227,7 @@ class AdminMainView(ui.View):
                          embed=None, view=view)
 
     @ui.button(label="🔄 Сброс", style=discord.ButtonStyle.danger, custom_id="adm:reset")
-    async def reset_btn(self, button, interaction: discord.Interaction):
+    async def reset_btn(self, interaction: discord.Interaction, button):
         if not self._is_owner(self.user_id, interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
             return

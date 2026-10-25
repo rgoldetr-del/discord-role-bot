@@ -180,11 +180,11 @@ async def deliver_to_user(bot, member, guild, text):
             await ch.send(f"{member.mention} {text}", allowed_mentions=discord.AllowedMentions.none())
 
 
-# Фоновая задача авто-завершения аукционов (запускается из main.py в on_ready).
+# Фоновая задача авто-завершения аукционов (запускается из main.py в setup_hook).
 # Объявлена на уровне модуля, чтобы import auction_loop работал без вызова register().
 @tasks.loop(hours=1)
-async def auction_loop():
-    bot = _active_bot
+async def auction_loop(bot=None):
+    bot = bot or _active_bot
     if bot is None:
         return
     try:

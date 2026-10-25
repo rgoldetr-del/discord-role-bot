@@ -83,21 +83,20 @@ async def setup_hook():
     except Exception:
         log.exception("Не удалось синхронизировать команды")
 
-
-bot.setup_hook = setup_hook
-
-
-@bot.event
-async def on_ready():
-    log.info("Бот запущен как %s", bot.user)
-
     # фоновые задачи модулей (авто-завершение аукционов раз в час)
     try:
         from modules.auctions import auction_loop
         if not auction_loop.is_running():
-            auction_loop.start()
+            auction_loop.start(bot)
     except Exception:
         log.exception("Не удалось запустить auction_loop")
+
+
+# ВАЖНО: назначаем setup_hook ДО регистрации @bot.event.
+# Декоратор event() оборачивает коллбэк и при присваивании bot.setup_hook
+# перезаписывает оригинальный setup_hook — иначе база не подключается,
+# а Discord отвечает 404 Unknown interaction на все команды.
+bot.setup_hook = setup_hook
 
 
 if __name__ == "__main__":

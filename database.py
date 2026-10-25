@@ -17,37 +17,34 @@ DB_PATH = "bot_database.db"
 EFFECTS = {
     "shield": {
         "name": "🛡️ Щит",
-        "description": "Защищает от дебаффа «Кривая рука» при открытии кейсов."
+        "description": "Защищает от дебаффа «Кривая рука» при открытии кейсов.",
+        "price": 50, "currency": "crystals",
     },
     "discount": {
         "name": "🏷️ Скидка",
-        "description": "Скидка 10% на покупку кейсов и ключей."
+        "description": "Скидка 10% на покупку кейсов и ключей в магазине.",
+        "price": 40, "currency": "crystals",
     },
     "income": {
         "name": "💼 Пассивный доход",
-        "description": "Ежедневная награда становится 250 монет вместо 100."
+        "description": "Ежедневная награда (/daily) становится 250 монет вместо 100.",
+        "price": 60, "currency": "crystals",
     },
     "critic": {
         "name": "⚡ Критик",
-        "description": "10% шанс увеличить выигрыш в мини-играх на 25%."
+        "description": "10% шанс увеличить выигрыш в мини-играх на 25%.",
+        "price": 45, "currency": "crystals",
     },
     "crystal_guard": {
         "name": "💎 Хранитель кристаллов",
-        "description": "15% шанс не потерять кристаллы при проигрыше."
+        "description": "15% шанс не потерять кристаллы при проигрыше.",
+        "price": 55, "currency": "crystals",
     },
     "high_roller": {
         "name": "🔥 Азарт",
-        "description": "Увеличивает максимальные ставки в мини-играх."
+        "description": "Увеличивает максимальные ставки в мини-играх в 1.5 раза.",
+        "price": 70, "currency": "crystals",
     },
-}
-
-EFFECT_PRICES = {
-    "shield": 50,
-    "discount": 40,
-    "income": 60,
-    "critic": 45,
-    "crystal_guard": 55,
-    "high_roller": 70,
 }
 
 EFFECT_ROLE_IDS = {
@@ -426,12 +423,12 @@ class Database:
                 case_id INTEGER NOT NULL,
                 role_id INTEGER,
                 rarity TEXT,
-                obtained_at INTEGER DEFAULT (strftime('%s', 'now'))
+                opened_at INTEGER DEFAULT (strftime('%s', 'now'))
             )
         """)
         await self.db.execute(
             "CREATE INDEX IF NOT EXISTS idx_history_user "
-            "ON case_open_history(user_id, guild_id)"
+            "ON case_open_history(user_id, guild_id, opened_at)"
         )
         await self.db.commit()
 
@@ -527,6 +524,47 @@ class Database:
         await self.db.execute(
             f"UPDATE users SET {column} = {column} + ? WHERE user_id = ? AND guild_id = ?",
             (amount, user_id, guild_id)
+        )
+        await self.db.commit()
+
+    async def try_spend_mixed(self, user_id: int, guild_id: int, coins: int, crystals: int) -> bool:
+        """Атомарное списание обеих валют одним запросом (смешанные ставки в мини-играх)."""
+        coins = max(0, int(coins))
+        crystals = max(0, int(crystals))
+
+        if coins == 0 and crystals == 0:
+            return True
+
+        await self.get_or_create_user(user_id, guild_id)
+
+        async with self.db.execute(
+            """
+            UPDATE users
+            SET coins = coins - ?, crystals = crystals - ?
+            WHERE user_id = ? AND guild_id = ? AND coins >= ? AND crystals >= ?
+            """,
+            (coins, crystals, user_id, guild_id, coins, crystals)
+        ) as cursor:
+            await self.db.commit()
+            return cursor.rowcount > 0
+
+    async def award_mixed(self, user_id: int, guild_id: int, coins: int, crystals: int):
+        """Одновременная выдача обеих валют."""
+        coins = max(0, int(coins))
+        crystals = max(0, int(crystals))
+
+        if coins == 0 and crystals == 0:
+            return
+
+        await self.get_or_create_user(user_id, guild_id)
+
+        await self.db.execute(
+            """
+            UPDATE users
+            SET coins = coins + ?, crystals = crystals + ?
+            WHERE user_id = ? AND guild_id = ?
+            """,
+            (coins, crystals, user_id, guild_id)
         )
         await self.db.commit()
 
@@ -723,6 +761,26 @@ class Database:
         )
         await self.db.commit()
         return True
+
+    async def is_item_locked(self, inventory_id: int) -> bool:
+        """True, если предмет участвует в активной продаже или аукционе."""
+        now = int(time.time())
+
+        row = await self._fetchone(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM market_listings
+                 WHERE inventory_id = ? AND is_sold = 0) AS listings,
+                (SELECT COUNT(*) FROM auctions
+                 WHERE inventory_id = ? AND end_time > ?) AS auctions
+            """,
+            (inventory_id, inventory_id, now)
+        )
+
+        if not row:
+            return False
+
+        return bool(row["listings"] or row["auctions"])
 
     async def is_inventory_locked(self, inventory_id: int) -> bool:
         market_row = await self._fetchone(

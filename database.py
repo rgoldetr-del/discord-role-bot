@@ -14,38 +14,40 @@ DB_PATH = "bot_database.db"
 
 # ===== Эффекты (баффы, покупаемые в /shop и хранящиеся в инвентаре) =====
 
-# Эффекты бессрочны: они лежат в инвентаре как role_type='effect' с is_applied=1
-# и действуют, пока игрок не выключит их сам (кнопка ⏸️/▶️ в /inventory).
+# Эффекты действуют 1 час после покупки (inventory.effect_expires_at).
+# Роли-улучшения («Удача», «Богач») — бессрочные (role_type='upgradeable').
+EFFECT_DURATION = 3600  # 1 час
+
 EFFECTS = {
     "shield": {
         "name": "🛡️ Щит", "emoji": "🛡️",
-        "description": "Защищает от дебаффа «Кривая рука» при открытии кейсов. Действует бессрочно.",
-        "price": 50, "currency": "crystals",
+        "description": "Защищает от дебаффа «Кривая рука» при открытии кейсов. Действует 1 час.",
+        "price": 1500, "currency": "coins",
     },
     "discount": {
         "name": "🏷️ Скидка", "emoji": "🏷️",
-        "description": "Скидка 10% на покупку кейсов и ключей в магазине. Действует бессрочно.",
-        "price": 40, "currency": "crystals",
+        "description": "Скидка 10% на покупку кейсов и ключей в магазине. Действует 1 час.",
+        "price": 1200, "currency": "coins",
     },
     "luck_charm": {
         "name": "🍀 Талисман удачи", "emoji": "🍀",
-        "description": "Игнорирует 5% шанса пустой награды колеса — перекручивает её в пользу. Бессрочно.",
-        "price": 65, "currency": "crystals",
+        "description": "Перекручивает пустые сектора колеса в пользу. Действует 1 час.",
+        "price": 2000, "currency": "coins",
     },
     "critic": {
         "name": "⚡ Критик", "emoji": "⚡",
-        "description": "10% шанс увеличить выигрыш в мини-играх на 25%. Действует бессрочно.",
-        "price": 45, "currency": "crystals",
+        "description": "10% шанс увеличить выигрыш в мини-играх на 25%. Действует 1 час.",
+        "price": 1400, "currency": "coins",
     },
     "crystal_guard": {
         "name": "💎 Хранитель кристаллов", "emoji": "💎",
-        "description": "15% шанс не потерять кристаллы при проигрыше. Действует бессрочно.",
-        "price": 55, "currency": "crystals",
+        "description": "15% шанс не потерять кристаллы при проигрыше. Действует 1 час.",
+        "price": 1800, "currency": "coins",
     },
     "high_roller": {
         "name": "🔥 Азарт", "emoji": "🔥",
-        "description": "Увеличивает максимальные ставки в мини-играх в 1.5 раза. Действует бессрочно.",
-        "price": 70, "currency": "crystals",
+        "description": "Увеличивает максимальные ставки в мини-играх в 1.5 раза. Действует 1 час.",
+        "price": 2200, "currency": "coins",
     },
 }
 
@@ -164,6 +166,7 @@ class Database:
                 level INTEGER DEFAULT 1,
                 is_applied INTEGER DEFAULT 0,
                 market_price INTEGER DEFAULT 0,
+                effect_expires_at INTEGER DEFAULT 0,
                 obtained_at INTEGER DEFAULT (strftime('%s', 'now'))
             );
 
@@ -414,6 +417,8 @@ class Database:
                 await self.db.commit()
 
         await _add_column("users", "last_daily", "INTEGER DEFAULT 0")
+        await _add_column("users", "last_free_case", "INTEGER DEFAULT 0")
+        await _add_column("inventory", "effect_expires_at", "INTEGER DEFAULT 0")
         await _add_column("cases", "case_crystal_price", "INTEGER DEFAULT 0")
         await _add_column("cases", "key_crystal_price", "INTEGER DEFAULT 0")
         await _add_column("market_listings", "currency", "TEXT DEFAULT 'coins'")
@@ -575,46 +580,82 @@ class Database:
     # ===== Эффекты (роль-баффы в инвентаре, role_type='effect') =====
 
     async def has_effect(self, user_id: int, guild_id: int, effect: str) -> bool:
+        """Эффект активен, если куплен и не истёк (действует EFFECT_DURATION = 1 час)."""
+        now = int(time.time())
         row = await self._fetchone(
             """
             SELECT COUNT(*) AS count
             FROM inventory
             WHERE user_id = ? AND guild_id = ? AND role_type = 'effect'
               AND rarity = ? AND is_applied = 1
+              AND COALESCE(effect_expires_at, 0) > ?
             """,
-            (user_id, guild_id, effect)
+            (user_id, guild_id, effect, now)
         )
         return bool(row and row["count"] > 0)
 
     async def add_effect_to_inventory(self, user_id: int, guild_id: int, effect: str) -> int:
-        """Добавляет эффект в инвентарь. -1, если такой эффект уже есть."""
-        if await self.has_effect(user_id, guild_id, effect):
+        """Продлевает эффект на 1 час (покупка суммируется). Возвращает id предмета."""
+        if effect not in EFFECTS:
             return -1
 
         role_id = EFFECT_ROLE_IDS.get(effect, 2999)
+        now = int(time.time())
+
+        # уже есть активный эффект — просто продлеваем от текущего момента
+        cur = await self.db.execute(
+            """
+            UPDATE inventory SET effect_expires_at = ?, is_applied = 1
+            WHERE user_id = ? AND guild_id = ? AND role_type = 'effect'
+              AND rarity = ? AND COALESCE(effect_expires_at, 0) > ?
+            """,
+            (now + EFFECT_DURATION, user_id, guild_id, effect, now),
+        )
+        await self.db.commit()
+        if cur.rowcount > 0:
+            return 0  # продление (не новый предмет)
+
+        # есть истёкший тот же эффект — реактивируем его записью с новым сроком
+        cur = await self.db.execute(
+            """
+            UPDATE inventory SET effect_expires_at = ?, is_applied = 1
+            WHERE user_id = ? AND guild_id = ? AND role_type = 'effect' AND rarity = ?
+            """,
+            (now + EFFECT_DURATION, user_id, guild_id, effect),
+        )
+        await self.db.commit()
+        if cur.rowcount > 0:
+            return 0
 
         async with self.db.execute(
             """
             INSERT INTO inventory
-            (user_id, guild_id, role_id, role_type, rarity, level, is_applied)
-            VALUES (?, ?, ?, 'effect', ?, 1, 1)
+            (user_id, guild_id, role_id, role_type, rarity, level, is_applied, effect_expires_at)
+            VALUES (?, ?, ?, 'effect', ?, 1, 1, ?)
             """,
-            (user_id, guild_id, role_id, effect)
+            (user_id, guild_id, role_id, effect, now + EFFECT_DURATION)
         ) as cursor:
             await self.db.commit()
             return cursor.lastrowid
 
-    async def get_user_effects(self, user_id: int, guild_id: int) -> List[str]:
+    async def get_active_effects(self, user_id: int, guild_id: int) -> List[str]:
+        """Списки активных (не истёкших) эффектов."""
+        now = int(time.time())
         rows = await self._fetchall(
             """
             SELECT rarity
             FROM inventory
-            WHERE user_id = ? AND guild_id = ? AND role_type = 'effect' AND is_applied = 1
+            WHERE user_id = ? AND guild_id = ? AND role_type = 'effect'
+              AND is_applied = 1 AND COALESCE(effect_expires_at, 0) > ?
             ORDER BY id
             """,
-            (user_id, guild_id)
+            (user_id, guild_id, now)
         )
         return [row["rarity"] for row in rows]
+
+    # совместимость со старым именем
+    async def get_user_effects(self, user_id: int, guild_id: int) -> List[str]:
+        return await self.get_active_effects(user_id, guild_id)
 
     # ===== Ежедневная награда =====
 

@@ -95,6 +95,7 @@ class Database:
                 last_wheel_time INTEGER DEFAULT 0,
                 wheel_pity INTEGER DEFAULT 0,
                 broken_key_cost INTEGER DEFAULT 0,
+                last_daily INTEGER DEFAULT 0,
                 created_at INTEGER DEFAULT (strftime('%s', 'now')),
                 PRIMARY KEY (user_id, guild_id)
             );
@@ -847,10 +848,18 @@ class Database:
     # ===== Ключи и кейсы игроков =====
 
     async def add_key(self, user_id: int, guild_id: int, case_id: int, quantity: int = 1):
+        from modules.economy_utils import MAX_PLAYER_KEYS
+
         row = await self._fetchone(
             "SELECT quantity FROM player_keys WHERE user_id = ? AND guild_id = ? AND case_id = ?",
             (user_id, guild_id, case_id)
         )
+
+        current = row["quantity"] if row else 0
+        allowed = max(0, min(int(quantity), MAX_PLAYER_KEYS - current))
+
+        if allowed <= 0:
+            return False
 
         if row:
             await self.db.execute(
@@ -859,7 +868,7 @@ class Database:
                 SET quantity = quantity + ?
                 WHERE user_id = ? AND guild_id = ? AND case_id = ?
                 """,
-                (quantity, user_id, guild_id, case_id)
+                (allowed, user_id, guild_id, case_id)
             )
         else:
             await self.db.execute(
@@ -867,16 +876,25 @@ class Database:
                 INSERT INTO player_keys (user_id, guild_id, case_id, quantity)
                 VALUES (?, ?, ?, ?)
                 """,
-                (user_id, guild_id, case_id, quantity)
+                (user_id, guild_id, case_id, allowed)
             )
 
         await self.db.commit()
+        return True
 
     async def add_case(self, user_id: int, guild_id: int, case_id: int, quantity: int = 1):
+        from modules.economy_utils import MAX_PLAYER_CASES
+
         row = await self._fetchone(
             "SELECT quantity FROM player_cases WHERE user_id = ? AND guild_id = ? AND case_id = ?",
             (user_id, guild_id, case_id)
         )
+
+        current = row["quantity"] if row else 0
+        allowed = max(0, min(int(quantity), MAX_PLAYER_CASES - current))
+
+        if allowed <= 0:
+            return False
 
         if row:
             await self.db.execute(
@@ -885,7 +903,7 @@ class Database:
                 SET quantity = quantity + ?
                 WHERE user_id = ? AND guild_id = ? AND case_id = ?
                 """,
-                (quantity, user_id, guild_id, case_id)
+                (allowed, user_id, guild_id, case_id)
             )
         else:
             await self.db.execute(
@@ -893,10 +911,11 @@ class Database:
                 INSERT INTO player_cases (user_id, guild_id, case_id, quantity)
                 VALUES (?, ?, ?, ?)
                 """,
-                (user_id, guild_id, case_id, quantity)
+                (user_id, guild_id, case_id, allowed)
             )
 
         await self.db.commit()
+        return True
 
     async def use_key(self, user_id: int, guild_id: int, case_id: int) -> bool:
         async with self.db.execute(

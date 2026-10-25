@@ -12,7 +12,7 @@ from discord import ui
 
 from database import db
 from .shared import (
-    COIN_PER_CRYSTAL,
+    BET_VALUE_EQUIV,
     mixed_value,
     try_spend_mixed,
     award_mixed,
@@ -33,7 +33,7 @@ async def allowed_max_value(interaction: discord.Interaction) -> int:
 
     user = await db.get_or_create_user(interaction.user.id, interaction.guild.id)
 
-    crystal_value = user["crystals"] * COIN_PER_CRYSTAL
+    crystal_value = user["crystals"] * BET_VALUE_EQUIV
 
     return min(
         MAX_BET_VALUE,
@@ -122,7 +122,7 @@ class BetModal(ui.Modal, title="Ставка"):
 
         if total_value < MIN_BET_VALUE:
             await interaction.response.send_message(
-                f"❌ Минимальная ставка: {MIN_BET_VALUE} монет по курсу.",
+                f"❌ Минимальная ставка: {format_bet(MIN_BET_VALUE, 0)} (или эквивалент).",
                 ephemeral=True
             )
             return
@@ -131,7 +131,7 @@ class BetModal(ui.Modal, title="Ставка"):
 
         if total_value > max_value:
             await interaction.response.send_message(
-                f"❌ Максимальная ставка: {max_value} монет по курсу.",
+                f"❌ Твоя максимальная ставка сейчас: {format_bet(max_value, 0)}.",
                 ephemeral=True
             )
             return

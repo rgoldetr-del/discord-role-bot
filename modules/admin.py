@@ -8,7 +8,7 @@ import discord
 from discord import ui
 
 from database import db
-from .persistent_utils import can_manage
+from .shared import can_manage
 
 
 def find_member(guild: discord.Guild, interaction_msg, raw: str):

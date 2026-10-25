@@ -1506,8 +1506,8 @@ class Database:
         start_price: int,
         duration_hours: int
     ) -> Dict[str, Any]:
-        if start_price <= 0:
-            return {"success": False, "error": "Начальная цена должна быть больше 0."}
+        if start_price < 0:
+            return {"success": False, "error": "Начальная цена не может быть отрицательной."}
 
         if duration_hours <= 0 or duration_hours > 24:
             return {"success": False, "error": "Длительность должна быть от 1 до 24 часов."}
@@ -1566,7 +1566,8 @@ class Database:
             return {"success": False, "error": "Нельзя делать ставку на свой аукцион."}
 
         current_bid = auction["current_bid"] or 0
-        min_bid = auction["start_price"] if current_bid <= 0 else current_bid + 100
+        # при нулевой стартовой цене первая ставка — минимум 1 монета
+        min_bid = max(1, auction["start_price"]) if current_bid <= 0 else current_bid + 100
 
         if bid_amount < min_bid:
             return {"success": False, "error": f"Минимальная ставка: {min_bid} монет."}

@@ -17,18 +17,7 @@ from .shared import (
 )
 
 
-def can_manage_cases(interaction: discord.Interaction) -> bool:
-    if not interaction.guild:
-        return False
-
-    is_owner = interaction.user.id == interaction.guild.owner_id
-
-    try:
-        is_admin = interaction.user.guild_permissions.administrator
-    except Exception:
-        is_admin = False
-
-    return is_owner or is_admin
+from .shared import can_manage as can_manage_cases
 
 
 class CreateCaseModal(ui.Modal, title="Создать кейс"):

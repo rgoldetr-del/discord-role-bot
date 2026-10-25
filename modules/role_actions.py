@@ -486,6 +486,9 @@ class SellModal(ui.Modal):
             )
             return
 
+        # defer до работы с БД и ролями — защита от 404 Unknown interaction
+        await interaction.response.defer(ephemeral=True)
+
         await remove_role_if_applied(interaction, item)
 
         if item.get("is_applied"):
@@ -500,9 +503,10 @@ class SellModal(ui.Modal):
         )
         await db.db.commit()
 
-        await interaction.response.send_message(
-            f"✅ Роль выставлена на продажу за **{price}** монет.",
-            ephemeral=True
+        await deliver(
+            interaction,
+            content=f"✅ Роль выставлена на продажу за **{price}** монет.",
+            view=None
         )
 
         await render_inventory(interaction, guild_id, user_id)
@@ -557,14 +561,17 @@ class GiftModal(ui.Modal):
                 await interaction.response.send_message("❌ Получатель не найден на сервере.", ephemeral=True)
                 return
 
+        # defer до работы с БД и ролями — иначе 404 Unknown interaction при долгой обработке
+        await interaction.response.defer(ephemeral=True)
+
         item = await get_item(guild_id, user_id, item_id)
 
         if not item:
-            await interaction.response.send_message("❌ Роль не найдена.", ephemeral=True)
+            await deliver(interaction, content="❌ Роль не найдена.", view=None)
             return
 
         if await is_locked(item_id):
-            await interaction.response.send_message("🔒 Роль участвует в рынке или аукционе.", ephemeral=True)
+            await deliver(interaction, content="🔒 Роль участвует в рынке или аукционе.", view=None)
             return
 
         await remove_role_if_applied(interaction, item)
@@ -623,22 +630,25 @@ class AuctionModal(ui.Modal):
             await interaction.response.send_message("❌ Введи числа.", ephemeral=True)
             return
 
-        if start_price <= 0:
-            await interaction.response.send_message("❌ Начальная цена должна быть больше 0.", ephemeral=True)
+        if start_price < 0:
+            await interaction.response.send_message("❌ Начальная цена не может быть отрицательной.", ephemeral=True)
             return
 
         if duration < 1 or duration > 24:
             await interaction.response.send_message("❌ Длительность должна быть от 1 до 24 часов.", ephemeral=True)
             return
 
+        # defer до работы с БД и ролями — иначе 404 Unknown interaction при долгой обработке
+        await interaction.response.defer(ephemeral=True)
+
         item = await get_item(guild_id, user_id, item_id)
 
         if not item:
-            await interaction.response.send_message("❌ Роль не найдена.", ephemeral=True)
+            await deliver(interaction, content="❌ Роль не найдена.", view=None)
             return
 
         if await is_locked(item_id):
-            await interaction.response.send_message("🔒 Роль участвует в рынке или аукционе.", ephemeral=True)
+            await deliver(interaction, content="🔒 Роль участвует в рынке или аукционе.", view=None)
             return
 
         await remove_role_if_applied(interaction, item)
@@ -657,9 +667,11 @@ class AuctionModal(ui.Modal):
         )
         await db.db.commit()
 
-        await interaction.response.send_message(
-            f"✅ Аукцион создан. Начальная цена: **{start_price}** монет.",
-            ephemeral=True
+        price_text = "бесплатно (первая ставка от 1 монеты)" if start_price == 0 else f"**{start_price}** монет"
+        await deliver(
+            interaction,
+            content=f"✅ Аукцион создан. Начальная цена: {price_text}.\nУправлять ставками: /auction",
+            view=None
         )
 
         await render_inventory(interaction, guild_id, user_id)

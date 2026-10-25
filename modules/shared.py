@@ -27,9 +27,13 @@ RARITY_NAME = {
     "secret+": "Абсолютная"
 }
 
-# Внутренний эквивалент для лимитов мини-игр (смешанные ставки).
-# ВНИМАНИЕ: это НЕ курс обмена — монеты и кристаллы не конвертируются друг в друга!
-COIN_PER_CRYSTAL = 10
+# Внутренний эквивалент нужен ТОЛЬКО для расчёта лимитов ставок в мини-играх.
+# Это НЕ курс обмена: монеты и кристаллы не конвертируются друг в друга
+# и обменять их между собой невозможно.
+BET_VALUE_EQUIV = 10
+
+MAX_PLAYER_CASES = 50   # максимум одинаковых кейсов в инвентаре
+MAX_PLAYER_KEYS = 50    # максимум одинаковых ключей в инвентаре
 
 cooldowns = {}
 
@@ -47,11 +51,22 @@ def get_role_name(guild: discord.Guild, role_id: int) -> str:
     return role.name if role else f"Роль {role_id}"
 
 
+def can_manage(interaction: discord.Interaction) -> bool:
+    """Владелец сервера или администратор."""
+    if not interaction.guild:
+        return False
 
+    if interaction.user.id == interaction.guild.owner_id:
+        return True
+
+    try:
+        return interaction.user.guild_permissions.administrator
+    except Exception:
+        return False
 
 
 def mixed_value(coins: int, crystals: int) -> int:
-    return max(0, coins) + max(0, crystals) * COIN_PER_CRYSTAL
+    return max(0, coins) + max(0, crystals) * BET_VALUE_EQUIV
 
 
 def format_bet(coins: int, crystals: int) -> str:
@@ -256,16 +271,16 @@ async def award_mixed_win(
         payout_crystals = 0
 
     elif bet_coins == 0:
-        payout_crystals = total_value // COIN_PER_CRYSTAL
-        payout_coins = total_value % COIN_PER_CRYSTAL
+        payout_crystals = total_value // BET_VALUE_EQUIV
+        payout_coins = total_value % BET_VALUE_EQUIV
 
     else:
         coin_share = bet_coins / bet_value
         payout_coins = int(total_value * coin_share)
         remaining_value = total_value - payout_coins
 
-        payout_crystals = remaining_value // COIN_PER_CRYSTAL
-        payout_coins += remaining_value % COIN_PER_CRYSTAL
+        payout_crystals = remaining_value // BET_VALUE_EQUIV
+        payout_coins += remaining_value % BET_VALUE_EQUIV
 
     payout_coins = max(0, payout_coins)
     payout_crystals = max(0, payout_crystals)

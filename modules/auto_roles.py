@@ -120,17 +120,7 @@ PRESET_CASES = [
 ]
 
 
-def can_manage(interaction: discord.Interaction) -> bool:
-    if not interaction.guild:
-        return False
-
-    if interaction.user.id == interaction.guild.owner_id:
-        return True
-
-    try:
-        return interaction.user.guild_permissions.administrator
-    except Exception:
-        return False
+from .shared import can_manage
 
 
 async def generate_roles_for_case(guild: discord.Guild, case_id: int):

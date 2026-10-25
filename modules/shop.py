@@ -16,7 +16,7 @@ import discord
 from discord import ui
 
 from database import db, EFFECTS
-from .economy_utils import apply_discount
+
 from .persistent_utils import make_id
 from .shared import get_rarity_emoji, get_rarity_name
 

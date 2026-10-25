@@ -8,9 +8,7 @@
 # - красивая карточка предмета с действиями;
 # - экономика: лимиты кейсов/ключей, скидка «Скидка», защита от дублирования.
 #
-# Подключение: добавь "inventory_v2" В КОНЕЦ списка MODULES в main.py
-# (после inventory, role_actions и interface_update), чтобы команда /inventory
-# была заменена новой версией.
+# Подключение: модуль "inventory_v2" в списке MODULES в main.py.
 # ======================================================================
 
 import time
@@ -19,15 +17,13 @@ import discord
 from discord import app_commands, ui
 
 from database import db
-from .economy_utils import (
-    MAX_PLAYER_CASES,
-    MAX_PLAYER_KEYS,
-)
 from .shared import (
     check_cooldown,
     get_rarity_emoji,
     get_rarity_name,
     deliver_message,
+    MAX_PLAYER_CASES,
+    MAX_PLAYER_KEYS,
 )
 from .persistent_utils import make_id, id_parts
 

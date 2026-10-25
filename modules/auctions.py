@@ -9,7 +9,7 @@ from discord import app_commands
 from database import db
 from .shared import (
     check_cooldown,
-    safe_remove_role,
+    deliver_message,
     get_rarity_emoji,
     get_role_name
 )
@@ -26,10 +26,12 @@ def register(bot):
             await interaction.response.send_message("⏳ Подожди немного.", ephemeral=True)
             return
 
+        # defer до работы с БД — иначе долгий ответ вызывает 404 Unknown interaction
+        await interaction.response.defer(ephemeral=True)
         auctions = await db.get_active_auctions(interaction.guild.id)
 
         if not auctions:
-            await interaction.response.send_message("🔨 Нет активных аукционов.", ephemeral=True)
+            await deliver_message(interaction, content="🔨 Нет активных аукционов.")
             return
 
         embed = discord.Embed(
@@ -58,46 +60,7 @@ def register(bot):
                 inline=True
             )
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @bot.tree.command(name="auction_create", description="Создать аукцион")
-    @app_commands.describe(
-        inventory_id="ID роли из инвентаря",
-        start_price="Начальная цена",
-        duration_hours="Длительность в часах (макс 24)"
-    )
-    async def auction_create(
-        interaction: discord.Interaction,
-        inventory_id: int,
-        start_price: int,
-        duration_hours: int = 24
-    ):
-        if not interaction.guild:
-            await interaction.response.send_message("Только на сервере.", ephemeral=True)
-            return
-
-        result = await db.create_auction(
-            interaction.user.id,
-            interaction.guild.id,
-            inventory_id,
-            start_price,
-            duration_hours
-        )
-
-        if not result["success"]:
-            await interaction.response.send_message(f"❌ {result['error']}", ephemeral=True)
-            return
-
-        if result.get("was_applied") and result.get("role_id"):
-            await safe_remove_role(interaction.guild, interaction.user.id, result["role_id"])
-
-        await interaction.response.send_message(
-            f"✅ Аукцион создан.\n"
-            f"ID аукциона: `{result['auction_id']}`\n"
-            f"Начальная цена: {start_price} монет\n"
-            f"Длительность: {duration_hours} часов",
-            ephemeral=True
-        )
+        await deliver_message(interaction, embed=embed)
 
     @bot.tree.command(name="auction_bid", description="Сделать ставку на аукционе")
     @app_commands.describe(auction_id="ID аукциона", amount="Ставка в монетах")
@@ -110,13 +73,15 @@ def register(bot):
             await interaction.response.send_message("⏳ Подожди немного.", ephemeral=True)
             return
 
+        # defer до работы с БД (возврат ставок прошлым игрокам — несколько запросов)
+        await interaction.response.defer(ephemeral=True)
         result = await db.place_bid(interaction.user.id, auction_id, amount)
 
         if not result["success"]:
-            await interaction.response.send_message(f"❌ {result['error']}", ephemeral=True)
+            await deliver_message(interaction, content=f"❌ {result['error']}")
             return
 
-        await interaction.response.send_message(
-            f"✅ Ставка **{result['bid_amount']}** монет принята.",
-            ephemeral=True
+        await deliver_message(
+            interaction,
+            content=f"✅ Ставка **{result['bid_amount']}** монет принята."
         )

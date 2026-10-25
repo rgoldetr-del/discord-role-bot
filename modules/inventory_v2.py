@@ -20,10 +20,8 @@ from discord import app_commands, ui
 
 from database import db
 from .economy_utils import (
-    COIN_PER_CRYSTAL,
     MAX_PLAYER_CASES,
     MAX_PLAYER_KEYS,
-    apply_discount,
 )
 from .shared import (
     check_cooldown,
@@ -125,7 +123,7 @@ async def build_summary_embed(
 
     embed.add_field(name="💰 Монеты", value=f"{user['coins']:,}".replace(",", " "), inline=True)
     embed.add_field(name="💎 Кристаллы", value=f"{user['crystals']:,}".replace(",", " "), inline=True)
-    embed.add_field(name="ℹ️ Курс", value=f"1 💎 = {COIN_PER_CRYSTAL} 💰", inline=True)
+    embed.add_field(name="ℹ️ Валюты", value="монеты и кристаллы — не конвертируются", inline=True)
 
     footer_counts = (
         f"🎭 Роли: {counts['roles']}   📦 Кейсы: {counts['cases']}   "

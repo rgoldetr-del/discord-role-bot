@@ -27,8 +27,8 @@ RARITY_NAME = {
     "secret+": "Абсолютная"
 }
 
-# Курс валют для смешанных ставок и магазина.
-# 1 кристалл = 10 монет.
+# Внутренний эквивалент для лимитов мини-игр (смешанные ставки).
+# ВНИМАНИЕ: это НЕ курс обмена — монеты и кристаллы не конвертируются друг в друга!
 COIN_PER_CRYSTAL = 10
 
 cooldowns = {}
@@ -47,10 +47,7 @@ def get_role_name(guild: discord.Guild, role_id: int) -> str:
     return role.name if role else f"Роль {role_id}"
 
 
-def crystal_price_from_coins(coin_price: int) -> int:
-    if coin_price <= 0:
-        return 1
-    return max(1, (coin_price + COIN_PER_CRYSTAL - 1) // COIN_PER_CRYSTAL)
+
 
 
 def mixed_value(coins: int, crystals: int) -> int:

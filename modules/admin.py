@@ -156,6 +156,10 @@ class AdminMainView(ui.View):
     def check_owner(self, interaction: discord.Interaction) -> bool:
         return interaction.user.id == self.user_id and can_manage(interaction)
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item):
+        # защитный обработчик: не «глушить» view при ошибке кнопки
+        print(f"[admin view error] {error!r}")
+
     @ui.button(label="🛠 Кейсы", style=discord.ButtonStyle.primary, custom_id="adm:cases")
     async def cases_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
         if not self.check_owner(interaction):

@@ -18,7 +18,7 @@ from discord import ui
 from database import db, EFFECTS
 from .economy_utils import apply_discount
 from .persistent_utils import make_id
-from .shared import get_rarity_emoji, get_rarity_name, crystal_price_from_coins
+from .shared import get_rarity_emoji, get_rarity_name
 
 # защита от быстрых повторных кликов «Купить» (anti double-spend)
 _pay_locks: dict[tuple, float] = {}
@@ -163,14 +163,16 @@ class ShopView(ui.View):
             case = dict(row)
             coin_case = int(case["case_price"] or 0)
             coin_key = int(case["key_price"] or 0)
+            # Кристальные цены задаются админом отдельно (0 = покупка за кристаллы недоступна).
+            # Валюты не конвертируются — автоматического пересчёта нет.
             cases.append({
                 "id": case["id"],
                 "name": case["name"],
                 "rarity": case["case_rarity"],
                 "case_coins": coin_case,
-                "case_crystals": int(case.get("case_crystal_price") or 0) or crystal_price_from_coins(coin_case),
+                "case_crystals": int(case.get("case_crystal_price") or 0),
                 "key_coins": coin_key,
-                "key_crystals": int(case.get("key_crystal_price") or 0) or crystal_price_from_coins(coin_key),
+                "key_crystals": int(case.get("key_crystal_price") or 0),
             })
         return cases
 
@@ -213,10 +215,12 @@ class ShopView(ui.View):
                 emoji = get_rarity_emoji(c["rarity"])
                 if self.tab == TAB_CASES:
                     price = await apply_discount(self.user_id, self.guild_id, c["case_coins"])
-                    lines.append(f"{emoji} **{c['name']}** — 💰 {fmt(price)} • 💎 {fmt(c['case_crystals'])}")
+                    cry = f" • 💎 {fmt(c['case_crystals'])}" if c["case_crystals"] > 0 else ""
+                    lines.append(f"{emoji} **{c['name']}** — 💰 {fmt(price)}{cry}")
                 else:
                     price = await apply_discount(self.user_id, self.guild_id, c["key_coins"])
-                    lines.append(f"{emoji} 🔑 к **{c['name']}** — 💰 {fmt(price)} • 💎 {fmt(c['key_crystals'])}")
+                    cry = f" • 💎 {fmt(c['key_crystals'])}" if c["key_crystals"] > 0 else ""
+                    lines.append(f"{emoji} 🔑 к **{c['name']}** — 💰 {fmt(price)}{cry}")
 
             embed.description = "\n".join(lines) if lines else "_Пусто: админ ещё не создал активных кейсов._"
             embed.set_footer(text=f"Страница {self.page + 1}/{pages} • Валюты не конвертируются: плати тем, что указано")
@@ -226,9 +230,9 @@ class ShopView(ui.View):
                 for c in cases[:25]:
                     emoji = get_rarity_emoji(c["rarity"])
                     if self.tab == TAB_CASES:
-                        desc = f"💰 {fmt(c['case_coins'])} / 💎 {fmt(c['case_crystals'])}"
+                        desc = f"💰 {fmt(c['case_coins'])}" + (f" / 💎 {fmt(c['case_crystals'])}" if c["case_crystals"] > 0 else "")
                     else:
-                        desc = f"💰 {fmt(c['key_coins'])} / 💎 {fmt(c['key_crystals'])}"
+                        desc = f"💰 {fmt(c['key_coins'])}" + (f" / 💎 {fmt(c['key_crystals'])}" if c["key_crystals"] > 0 else "")
                     options.append(discord.SelectOption(
                         label=c["name"][:100], description=desc[:100],
                         value=self.item_value_for(self.tab, c["id"]), emoji=emoji,
@@ -245,7 +249,8 @@ class ShopView(ui.View):
                     c["case_crystals"] if self.tab == TAB_CASES else c["key_crystals"]
                 )
                 self.add_item(PayButton(self, iv, "coins", f"💰 {fmt(coins_price)}"))
-                self.add_item(PayButton(self, iv, "crystals", f"💎 {fmt(crystals_price)}"))
+                if crystals_price > 0:
+                    self.add_item(PayButton(self, iv, "crystals", f"💎 {fmt(crystals_price)}"))
 
             if pages > 1:
                 if self.page > 0:
@@ -490,13 +495,15 @@ class ShopView(ui.View):
             fields = [
                 (field_name, rarity_name),
                 ("💰 Цена", fmt(coins_price)),
-                ("💎 Цена", fmt(crystals_price)),
             ]
+            if crystals_price > 0:
+                fields.append(("💎 Цена", fmt(crystals_price)))
 
             buttons = [
                 PayButton(self, item_value, "coins", f"Купить за 💰 {fmt(coins_price)}"),
-                PayButton(self, item_value, "crystals", f"Купить за 💎 {fmt(crystals_price)}"),
             ]
+            if crystals_price > 0:
+                buttons.append(PayButton(self, item_value, "crystals", f"Купить за 💎 {fmt(crystals_price)}"))
             return {
                 "title": title,
                 "description": "Открывается из инвентаря (нужен кейс + ключ).",

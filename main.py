@@ -32,20 +32,15 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Список модулей бота. Если файла нет — предупреждение, бот продолжает запуск.
 MODULES = [
-    "inventory",
-    "cases",
-    "case_admin",
-    "wheel",
-    "wheel_info",
-    "market",
-    "auctions",
-    "gifts",
-    "upgrades",
-    "minigames",
-    "update_v2",
-    "interface_update",
-    "auto_roles",
-    "case_shop_fix",
+    "cases",        # /case_info — просмотр наград кейсов
+    "shop",         # /shop + /daily — единый магазин (кейсы/ключи/эффекты/улучшения)
+    "wheel",        # /wheel + /wheel_info — почасовое колесо
+    "inventory_v2", # /inventory — инвентарь с вкладками (заменяет старый inventory.py)
+    "role_actions", # кнопки действий над предметами инвентаря (применить/открыть/продать/подарить)
+    "market",       # /market — маркетплейс
+    "auctions",     # /auction — аукционы
+    "minigames",    # /games — все мини-игры
+    "admin",        # /admin — единая админ-панель (кейсы, выдача, сбросы)
 ]
 
 for module_name in MODULES:

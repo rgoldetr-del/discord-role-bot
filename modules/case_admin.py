@@ -450,6 +450,90 @@ class CaseAdminListView(ui.View):
         self.page += 1
         await self.refresh(interaction)
 
+    @ui.button(label="⚡ Готовые пресеты", style=discord.ButtonStyle.primary, custom_id="ca:preset")
+    async def preset_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
+        """Создать 7 готовых кейсов с редкостями и ролями (из старого /case_preset_full)."""
+        if interaction.user.id != self.user_id or not can_manage_cases(interaction):
+            await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)
+            return
+        if not interaction.guild.me.guild_permissions.manage_roles:
+            await interaction.response.send_message(
+                "❌ У бота нет права «Управлять ролями».", ephemeral=True)
+            return
+
+        from .auto_roles import PRESET_CASES, RARITY_COLORS
+        await interaction.response.defer(ephemeral=True)
+
+        lines = []
+        existing_names = {r.name for r in interaction.guild.roles}
+
+        for preset in PRESET_CASES:
+            case_id = await db.create_case_return_id(
+                interaction.guild.id, preset["name"], preset["case_rarity"],
+                preset["case_price"], preset["key_price"])
+
+            for rarity in preset["rarities"]:
+                rarity_id = await db.add_rarity_return_id(
+                    case_id, rarity["rarity"], rarity["chance"], rarity["price"])
+
+                for role_name in rarity["roles"]:
+                    final_name, counter = role_name, 2
+                    while final_name in existing_names:
+                        final_name = f"{role_name} {counter}"
+                        counter += 1
+                    try:
+                        role = await interaction.guild.create_role(
+                            name=final_name,
+                            colour=discord.Colour(RARITY_COLORS.get(rarity["rarity"], 0x808080)),
+                            permissions=discord.Permissions.none(),
+                            hoist=False, mentionable=False,
+                            reason="Автосоздание пресета кейсов")
+                    except discord.Forbidden:
+                        await interaction.followup.send(
+                            "❌ У бота нет права создавать роли.", ephemeral=True)
+                        return
+                    except discord.HTTPException as e:
+                        await interaction.followup.send(f"❌ Ошибка создания роли: {e}", ephemeral=True)
+                        return
+                    await db.add_roles_to_case_rarity(rarity_id, [role.id])
+                    existing_names.add(final_name)
+
+            act = await db.activate_case(case_id)
+            if act["success"]:
+                lines.append(f"✅ {preset['name']} — создан и активирован")
+            else:
+                lines.append(f"⚠️ {preset['name']} — создан, но не активирован:\n"
+                             + "\n".join(act["details"]))
+
+        await interaction.followup.send("Готово:\n" + "\n".join(lines), ephemeral=True)
+
+    @ui.button(label="🤖 Роли для всех кейсов", style=discord.ButtonStyle.secondary, custom_id="ca:genall")
+    async def gen_all_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
+        """Сгенерировать недостающие роли для всех кейсов (из старого /gen_all_case_roles)."""
+        if interaction.user.id != self.user_id or not can_manage_cases(interaction):
+            await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)
+            return
+        if not interaction.guild.me.guild_permissions.manage_roles:
+            await interaction.response.send_message(
+                "❌ У бота нет права «Управлять ролями».", ephemeral=True)
+            return
+
+        from .auto_roles import generate_roles_for_case
+        await interaction.response.defer(ephemeral=True)
+
+        cases = await db.get_all_cases(self.guild_id, active_only=False)
+        total, errors = 0, []
+        for case in cases:
+            created, error = await generate_roles_for_case(interaction.guild, case["id"])
+            total += created
+            if error:
+                errors.append(f"{case['name']}: {error}")
+
+        msg = f"✅ Всего создано ролей: **{total}**"
+        if errors:
+            msg += "\n\n⚠️ Ошибки:\n" + "\n".join(errors)
+        await interaction.followup.send(msg, ephemeral=True)
+
     def make_case_callback(self, case_id: int):
         async def callback(interaction: discord.Interaction):
             if interaction.user.id != self.user_id or not can_manage_cases(interaction):

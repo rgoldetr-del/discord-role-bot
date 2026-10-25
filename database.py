@@ -634,6 +634,22 @@ class Database:
                 return {"success": False, "cooldown_left": max(0, int(cooldown_left))}
             return {"success": True, "amount": amount}
 
+    async def reset_wheel_cooldown(self, user_id: int, guild_id: int):
+        """Админ: сбросить кулдаун колеса игроку."""
+        await self.db.execute(
+            "UPDATE users SET last_wheel_time = 0 WHERE user_id = ? AND guild_id = ?",
+            (user_id, guild_id),
+        )
+        await self.db.commit()
+
+    async def reset_daily(self, user_id: int, guild_id: int):
+        """Админ: сбросить кулдаун ежедневной награды."""
+        await self.db.execute(
+            "UPDATE users SET last_daily = 0 WHERE user_id = ? AND guild_id = ?",
+            (user_id, guild_id),
+        )
+        await self.db.commit()
+
     async def update_crystals(self, user_id: int, guild_id: int, amount: int) -> int:
         await self.get_or_create_user(user_id, guild_id)
 

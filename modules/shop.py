@@ -573,6 +573,35 @@ class ShopItemSelect(ui.Select):
 
 
 def register(bot):
+    @bot.tree.command(name="daily", description="Получить ежедневный доход 💼")
+    async def daily(interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message("Только на сервере.", ephemeral=True)
+            return
+
+        await db.get_or_create_user(interaction.user.id, interaction.guild.id)
+
+        # Эффект «Богач»: награда 250 вместо 100
+        amount = 250 if await db.has_effect(interaction.user.id, interaction.guild.id, "rich") else 100
+
+        result = await db.claim_daily(interaction.user.id, interaction.guild.id, amount)
+        if not result["success"]:
+            remaining = int(result.get("cooldown_left") or result.get("remaining") or 0)
+            until = int(time.time()) + remaining
+            await interaction.response.send_message(
+                f"⏳ Награда уже получена! Следующая через <t:{until}:R>.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title="💼 Ежедневная награда",
+            description=f"Ты получил **{amount}** 🪙 монет!\n\n"
+                        f"Зайди в </shop:0> за эффектом «💰 Богач» — награда станет 250 монет.",
+            color=0x2ED573,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @bot.tree.command(name="shop", description="Магазин: кейсы, ключи, эффекты, улучшения")
     async def shop(interaction: discord.Interaction):
         if not interaction.guild:

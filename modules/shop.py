@@ -9,6 +9,9 @@
 # /shop_upgrade, /buy_upgrade — их больше нет.
 # ======================================================================
 
+import asyncio
+import time
+
 import discord
 from discord import ui
 
@@ -16,6 +19,23 @@ from database import db, EFFECTS
 from .economy_utils import apply_discount
 from .persistent_utils import make_id
 from .shared import get_rarity_emoji, get_rarity_name, crystal_price_from_coins
+
+# защита от быстрых повторных кликов «Купить» (anti double-spend)
+_pay_locks: dict[tuple, float] = {}
+
+
+async def _acquire_pay_lock(user_id: int, guild_id: int) -> bool:
+    key = (user_id, guild_id)
+    now = time.monotonic()
+    until = _pay_locks.get(key, 0)
+    if now < until:
+        return False
+    _pay_locks[key] = now + 3.0
+    # чистим протухшие записи
+    if len(_pay_locks) > 512:
+        for k in [k for k, v in _pay_locks.items() if v < now]:
+            _pay_locks.pop(k, None)
+    return True
 
 TAB_CASES = "cases"
 TAB_KEYS = "keys"
@@ -327,6 +347,11 @@ class ShopView(ui.View):
             await interaction.response.send_message("Это не твой магазин.", ephemeral=True)
             return
 
+        # защита от дабл-клика: одна покупка в 3 секунды на пользователя
+        if not await _acquire_pay_lock(interaction.user.id, self.guild_id):
+            await interaction.response.send_message("⏳ Подожди пару секунд между покупками.", ephemeral=True)
+            return
+
         kind, _, arg = item_value.partition(":")
         guild_id = self.guild_id
         user_id = self.user_id
@@ -522,9 +547,7 @@ class ShopView(ui.View):
         return None
 
 
-UPGRADES_TABLE = {
-    key: (name, desc, base) for key, (name, desc, base) in UPGRADE_INFO.items()
-}
+UPGRADES_TABLE = UPGRADE_INFO  # единый справочник улучшений (без дублирования)
 
 
 class ShopItemSelect(ui.Select):

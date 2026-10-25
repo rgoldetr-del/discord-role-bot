@@ -1,11 +1,13 @@
 # modules/role_actions.py
 
+import asyncio
 import time
 
 import discord
 from discord import ui
 
 from database import db
+from .shared import get_rarity_emoji, get_rarity_name, get_role_name
 
 
 FALLBACK_PRICES = {
@@ -106,16 +108,95 @@ async def deliver(interaction: discord.Interaction, content=None, embed=None, vi
 
 
 async def render_inventory(interaction: discord.Interaction, guild_id: int, user_id: int):
+    """Возврат в инвентарь после действия (использует inventory_v2)."""
     try:
-        from .inventory import InventoryView
+        from .inventory_v2 import InventoryV2View
 
-        view = InventoryView()
-        await view.render(interaction, int(guild_id), int(user_id), 0)
+        view = InventoryV2View(int(user_id), int(guild_id))
+        await view.refresh(interaction)
     except Exception:
         try:
             await interaction.message.edit(content=None, embed=None, view=None)
         except Exception:
             pass
+
+
+class CaseOpenButton(ui.Button):
+    """Кнопка «🔓 Открыть» для кейса из инвентаря (custom_id: ra:opencase:...)."""
+
+    def __init__(self, guild_id: int, user_id: int, case_id: int):
+        super().__init__(
+            style=discord.ButtonStyle.success,
+            label="🔓 Открыть",
+            custom_id=f"ra:opencase:{guild_id}:{user_id}:{case_id}",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        parts = self.custom_id.split(":")
+        _, action, raw_guild, raw_user, raw_case = parts
+
+        guild_id, user_id, case_id = int(raw_guild), int(raw_user), int(raw_case)
+
+        if interaction.user.id != user_id:
+            await interaction.response.send_message("❌ Это не твой инвентарь.", ephemeral=True)
+            return
+
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            return
+
+        message = await interaction.original_response()
+
+        # лёгкая анимация открытия
+        for emoji in ("🔑", "✨", "📦"):
+            try:
+                await message.edit(content=f"{emoji} Открываю кейс...")
+            except discord.HTTPException:
+                break
+            await asyncio.sleep(0.4)
+
+        result = await db.open_case(user_id, guild_id, case_id)
+
+        if not result["success"]:
+            await message.edit(content=f"❌ {result['error']}")
+            return
+
+        role_name = get_role_name(interaction.guild, result["role_id"])
+        emoji = get_rarity_emoji(result["rarity"])
+        rarity_name = get_rarity_name(result["rarity"])
+
+        embed = discord.Embed(
+            title="🎉 Кейс открыт!",
+            description=(
+                f"Выпала роль: {emoji} **{role_name}**\n"
+                f"Редкость: **{rarity_name}**\n"
+                f"Рыночная цена: **{result['market_price']:,}** монет".replace(",", " ")
+            ),
+            color=0x00BCD4,
+        )
+
+        if result["duplicate"]:
+            embed.add_field(name="🔁 Повтор", value="Эта роль уже была у тебя. Копия добавлена в инвентарь.", inline=False)
+        if result["debuff_applied"]:
+            embed.add_field(name="💀 Кривая рука", value="Ключ скользнул... Получен дебафф «Кривая рука». Лечится в /shop.", inline=False)
+
+        embed.set_footer(text="Новая роль — во вкладке 🎭 Роли в /inventory")
+
+        try:
+            await message.edit(content=None, embed=embed, view=None)
+        except discord.HTTPException:
+            pass
+
+        # публичное объявление о крупном дропе (эпик+)
+        if result["rarity"] in ("epic", "legendary", "secret", "secret+"):
+            try:
+                if interaction.channel:
+                    await interaction.channel.send(
+                        content=f"🎉 {interaction.user.mention} выбил {emoji} **{rarity_name}** из кейса **{result['case_name']}**!"
+                    )
+            except discord.HTTPException:
+                pass
 
 
 async def remove_role_if_applied(interaction: discord.Interaction, item: dict):

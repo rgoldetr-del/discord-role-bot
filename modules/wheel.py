@@ -1,17 +1,26 @@
 # modules/wheel.py
-# Оптимизированное колесо:
-# - сначала отвечаем на взаимодействие;
-# - потом делаем проверки БД;
-# - это убирает ошибку "Unknown interaction".
+# ======================================================================
+# Почасовое колесо: /wheel (крутить раз в час) + /wheel_info (награды).
+# - сначала defer, потом работа с БД (убирает "Unknown interaction");
+# - атомарный захват вращения через UPDATE ... WHERE last_wheel_time <= now-3600;
+# - pity-система: после 10 пустых гарантируется редкий ключ;
+# - награды (монеты/кристаллы/кейсы/ключи) падают в инвентарь — используются там.
+# Заменяет старый wheel.py и отдельный wheel_info.py.
+# ======================================================================
 
 import asyncio
 import random
 import time
 
 import discord
+from discord import ui
 
 from database import db
 from .shared import check_cooldown, get_rarity_name
+from .persistent_utils import make_id, edit_view
+
+WHEEL_COOLDOWN = 3600  # 1 час
+PITY_MAX = 10
 
 WHEEL_REWARDS = [
     {"type": "empty", "weight": 300},
@@ -37,224 +46,229 @@ WHEEL_REWARDS = [
     {"type": "coins", "amount": 2000, "weight": 5},
 ]
 
-KEY_FALLBACK_VALUE = {
-    "common": 50,
-    "rare": 150,
-    "epic": 500
-}
+KEY_FALLBACK_VALUE = {"common": 50, "rare": 150, "epic": 500}
 
 KEY_PREFERRED_RARITIES = {
     "common": ["common", "uncommon"],
     "rare": ["rare", "epic"],
-    "epic": ["epic", "legendary", "secret", "secret+"]
+    "epic": ["epic", "legendary", "secret", "secret+"],
 }
 
 
 def plural_keys(n: int) -> str:
     n = abs(n) % 100
     n1 = n % 10
-
     if 10 < n < 20:
         return "ключей"
-
     if 1 < n1 < 5:
         return "ключа"
-
     if n1 == 1:
         return "ключ"
-
     return "ключей"
 
 
 def choose_case_for_key(active_cases, tier: str):
     preferred = KEY_PREFERRED_RARITIES.get(tier, [])
-
-    candidates = [
-        case for case in active_cases
-        if case["case_rarity"] in preferred
-    ]
-
-    if candidates:
-        return random.choice(candidates)
-
-    return random.choice(active_cases)
+    candidates = [c for c in active_cases if c["case_rarity"] in preferred]
+    return random.choice(candidates or active_cases)
 
 
-async def reset_pity(user_id: int, guild_id: int):
+async def _set_pity(user_id: int, guild_id: int, value: int):
     await db.db.execute(
-        "UPDATE users SET wheel_pity = 0 WHERE user_id = ? AND guild_id = ?",
-        (user_id, guild_id)
+        "UPDATE users SET wheel_pity = ? WHERE user_id = ? AND guild_id = ?",
+        (value, user_id, guild_id),
     )
     await db.db.commit()
 
 
-async def add_pity(user_id: int, guild_id: int):
-    await db.db.execute(
-        "UPDATE users SET wheel_pity = wheel_pity + 1 WHERE user_id = ? AND guild_id = ?",
-        (user_id, guild_id)
+async def _grant(reward: dict, user_id: int, guild_id: int, active_cases) -> str:
+    """Выдаёт награду, возвращает текст результата."""
+    rtype = reward["type"]
+
+    if rtype == "coins":
+        await db.update_coins(user_id, guild_id, reward["amount"])
+        return f"💰 Выпало **{reward['amount']:,}** монет.".replace(",", " ")
+
+    if rtype == "crystals":
+        await db.update_crystals(user_id, guild_id, reward["amount"])
+        return f"💎 Выпало **{reward['amount']}** кристаллов."
+
+    if rtype == "case":
+        case = random.choice(active_cases)
+        await db.add_case(user_id, guild_id, case["id"], reward["quantity"])
+        return (f"📦 Выпал бесплатный кейс **{case['name']}** "
+                f"({get_rarity_name(case['case_rarity'])})! Лежит в /inventory.")
+
+    if rtype == "key":
+        quantity = reward["quantity"]
+        if not active_cases:  # страховка: нет кейсов — отдаём монетами
+            amount = KEY_FALLBACK_VALUE.get(reward["tier"], 50) * quantity
+            await db.update_coins(user_id, guild_id, amount)
+            return f"💰 Ключи закончились. Выпало **{amount}** монет."
+        case = choose_case_for_key(active_cases, reward["tier"])
+        await db.add_key(user_id, guild_id, case["id"], quantity)
+        return (f"🔑 Выпало **{quantity}** {plural_keys(quantity)} "
+                f"от кейса **{case['name']}** ({get_rarity_name(case['case_rarity'])}).")
+
+    return "❌ Неизвестная награда."
+
+
+class WheelSpinButton(ui.Button):
+    def __init__(self, user_id: int):
+        super().__init__(
+            label="🎡 Крутить колесо",
+            style=discord.ButtonStyle.primary,
+            custom_id=make_id("wheel", "spin", user_id),
+        )
+        self.owner = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner:
+            await interaction.response.send_message("Колесо не твоё 🙂", ephemeral=True)
+            return
+        await run_spin(interaction)
+
+
+async def run_spin(interaction: discord.Interaction):
+    """Основная логика вращения. Используется и командой, и кнопкой."""
+    guild = interaction.guild
+    if not guild:
+        await interaction.response.send_message("Только на сервере.", ephemeral=True)
+        return
+
+    user_id, guild_id = interaction.user.id, guild.id
+
+    # Сначала подтверждаем взаимодействие — иначе Discord убьёт его таймаутом.
+    try:
+        await interaction.response.defer()
+    except discord.HTTPException:
+        return
+
+    message = await interaction.original_response()
+
+    if not await check_cooldown(user_id, guild_id):
+        await edit_view(interaction, content="⏳ Слишком быстро, подожди пару секунд.")
+        return
+
+    check = await db.can_spin_wheel(user_id, guild_id)
+    if not check["can_spin"]:
+        until = int(time.time()) + int(check["time_left"])
+        await edit_view(
+            interaction,
+            content=(
+                f"⏰ Колесо уже крутили. Следующее вращение: <t:{until}:R>\n"
+                f"Pity-счётчик: {check['pity']}/{PITY_MAX}"
+            ),
+            view=WheelSpinButton(user_id),
+        )
+        return
+
+    # Атомарный захват вращения (защита от гонки двух кликов).
+    now = int(time.time())
+    async with db.db.execute(
+        "UPDATE users SET last_wheel_time = ? "
+        "WHERE user_id = ? AND guild_id = ? AND last_wheel_time <= ?",
+        (now, user_id, guild_id, now - WHEEL_COOLDOWN),
+    ) as cursor:
+        await db.db.commit()
+        if cursor.rowcount == 0:
+            await edit_view(interaction, content="⏰ Ты уже крутил колесо.")
+            return
+
+    active_cases = await db.get_all_cases(guild_id, active_only=True)
+
+    # Лёгкая анимация: несколько быстрых «секторов».
+    sectors = ["🎡", "✨", "💰", "💎", "🔑", "📦"]
+    for s in sectors[:4]:
+        try:
+            await message.edit(content=f"{s} Кручу колесо...")
+        except discord.HTTPException:
+            break
+        await asyncio.sleep(0.35)
+
+    pity = check["pity"]
+
+    # Гарантированный ключ после PITY_MAX пустых.
+    if pity >= PITY_MAX and active_cases:
+        case = choose_case_for_key(active_cases, "rare")
+        await db.add_key(user_id, guild_id, case["id"], 1)
+        await _set_pity(user_id, guild_id, 0)
+        result = (f"🎉 **Pity-сброс!** Выпал **1 ключ** от кейса "
+                  f"**{case['name']}** ({get_rarity_name(case['case_rarity'])}).")
+    else:
+        weights = [r["weight"] for r in WHEEL_REWARDS]
+        reward = random.choices(WHEEL_REWARDS, weights=weights, k=1)[0]
+        if reward["type"] == "empty":
+            await _set_pity(user_id, guild_id, pity + 1)
+            result = f"💨 **Пусто.** Pity-счётчик: {pity + 1}/{PITY_MAX}"
+        else:
+            await _set_pity(user_id, guild_id, 0)
+            result = await _grant(reward, user_id, guild_id, active_cases)
+
+    next_time = int(time.time()) + WHEEL_COOLDOWN
+    await edit_view(
+        interaction,
+        content=f"{result}\n⏱️ Следующее вращение: <t:{next_time}:R>",
+        view=None,
     )
-    await db.db.commit()
+
+
+def _rewards_text() -> str:
+    total = sum(r["weight"] for r in WHEEL_REWARDS)
+
+    def pct(w):
+        return f"{w / total * 100:.1f}%"
+
+    icons = {"coins": "💰", "crystals": "💎", "key": "🔑", "case": "📦", "empty": "💨"}
+    lines = []
+    for r in sorted(WHEEL_REWARDS, key=lambda x: -x["weight"]):
+        if r["type"] == "coins":
+            name = f"{r['amount']:,} монет".replace(",", " ")
+        elif r["type"] == "crystals":
+            name = f"{r['amount']} кр."
+        elif r["type"] == "key":
+            name = f"{r['quantity']} {plural_keys(r['quantity'])} ({r['tier']})"
+        elif r["type"] == "case":
+            name = "кейс"
+        else:
+            name = "пусто"
+        lines.append(f"{icons[r['type']]} {pct(r['weight'])} — {name}")
+    return "\n".join(lines)
 
 
 def register(bot):
-    @bot.tree.command(name="wheel", description="Крутить почасовое колесо")
+    @bot.tree.command(name="wheel", description="Крутить почасовое колесо 🎡")
     async def wheel(interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)
             return
 
-        # СНАЧАЛА подтверждаем взаимодействие.
-        # Это обязательно, иначе Discord может убить взаимодействие с ошибкой
-        # "Unknown interaction", если база отвечает дольше 3 секунд.
-        try:
-            await interaction.response.defer(ephemeral=False)
-        except discord.HTTPException:
-            return
-
-        message = await interaction.original_response()
-
-        try:
-            await message.edit(content="🎰 Кручу колесо...")
-        except discord.HTTPException:
-            return
-
-        if not await check_cooldown(interaction.user.id, interaction.guild.id):
-            await message.edit(content="⏳ Подожди немного.")
-            return
-
         check = await db.can_spin_wheel(interaction.user.id, interaction.guild.id)
-
-        if not check["can_spin"]:
-            hours = int(check["time_left"] // 3600)
-            minutes = int((check["time_left"] % 3600) // 60)
-            seconds = int(check["time_left"] % 60)
-
-            await message.edit(
-                content=(
-                    f"⏰ Ты уже крутил колесо.\n"
-                    f"Следующее вращение через: **{hours}ч {minutes}м {seconds}с**\n"
-                    f"Pity-счётчик: {check['pity']}/10"
-                )
-            )
+        if check["can_spin"]:
+            await run_spin(interaction)
             return
 
-        active_cases = await db.get_all_cases(interaction.guild.id, active_only=True)
+        until = int(time.time()) + int(check["time_left"])
+        embed = discord.Embed(
+            title="🎡 Почасовое колесо",
+            description=(
+                f"⏰ Следующее вращение доступно: <t:{until}:R>\n"
+                f"Pity-счётчик: **{check['pity']}/{PITY_MAX}** "
+                f"(после {PITY_MAX} пустых — гарантированный редкий ключ)."
+            ),
+            color=0x9C27B0,
+        )
+        await interaction.response.send_message(
+            embed=embed, view=WheelSpinButton(interaction.user.id), ephemeral=True,
+        )
 
-        if not active_cases:
-            await message.edit(content="❌ Нет активных кейсов.")
-            return
-
-        # Лёгкая анимация.
-        # Одна короткая пауза и одно редактирование, без тяжёлых циклов.
-        await asyncio.sleep(0.45)
-
-        user = await db.get_or_create_user(interaction.user.id, interaction.guild.id)
-        now = int(time.time())
-
-        async with db.db.execute(
-            """
-            UPDATE users
-            SET last_wheel_time = ?
-            WHERE user_id = ? AND guild_id = ? AND last_wheel_time <= ?
-            """,
-            (now, interaction.user.id, interaction.guild.id, now - 3600)
-        ) as cursor:
-            await db.db.commit()
-
-            if cursor.rowcount == 0:
-                await message.edit(content="⏰ Ты уже крутил колесо.")
-                return
-
-        pity = user["wheel_pity"]
-
-        # Гарантированный ключ после 10 пустых.
-        if pity >= 10:
-            case = choose_case_for_key(active_cases, "rare")
-            await db.add_key(interaction.user.id, interaction.guild.id, case["id"], 1)
-            await reset_pity(interaction.user.id, interaction.guild.id)
-
-            rarity_name = get_rarity_name(case["case_rarity"])
-
-            await message.edit(
-                content=(
-                    f"🎉 **Pity-сброс!**\n"
-                    f"🔑 Выпал **1 ключ** от кейса **{case['name']}** ({rarity_name})."
-                )
-            )
-            return
-
-        weights = [reward["weight"] for reward in WHEEL_REWARDS]
-        reward = random.choices(WHEEL_REWARDS, weights=weights, k=1)[0]
-
-        if reward["type"] == "empty":
-            await add_pity(interaction.user.id, interaction.guild.id)
-
-            await message.edit(
-                content=(
-                    f"💨 **Пусто.**\n"
-                    f"Pity-счётчик: {pity + 1}/10"
-                )
-            )
-            return
-
-        await reset_pity(interaction.user.id, interaction.guild.id)
-
-        if reward["type"] == "coins":
-            amount = reward["amount"]
-            await db.update_coins(interaction.user.id, interaction.guild.id, amount)
-
-            await message.edit(
-                content=f"💰 Выпало **{amount}** монет."
-            )
-            return
-
-        if reward["type"] == "crystals":
-            amount = reward["amount"]
-            await db.update_crystals(interaction.user.id, interaction.guild.id, amount)
-
-            await message.edit(
-                content=f"💎 Выпало **{amount}** кристаллов."
-            )
-            return
-
-        if reward["type"] == "case":
-            case = random.choice(active_cases)
-            await db.add_case(interaction.user.id, interaction.guild.id, case["id"], reward["quantity"])
-
-            rarity_name = get_rarity_name(case["case_rarity"])
-
-            await message.edit(
-                content=(
-                    f"📦 Выпал бесплатный кейс **{case['name']}** ({rarity_name})."
-                )
-            )
-            return
-
-        if reward["type"] == "key":
-            tier = reward["tier"]
-            quantity = reward["quantity"]
-
-            if not active_cases:
-                amount = KEY_FALLBACK_VALUE.get(tier, 50) * quantity
-                await db.update_coins(interaction.user.id, interaction.guild.id, amount)
-
-                await message.edit(
-                    content=f"💰 Ключи закончились. Выпало **{amount}** монет."
-                )
-                return
-
-            case = choose_case_for_key(active_cases, tier)
-            await db.add_key(interaction.user.id, interaction.guild.id, case["id"], quantity)
-
-            rarity_name = get_rarity_name(case["case_rarity"])
-            key_word = plural_keys(quantity)
-
-            await message.edit(
-                content=(
-                    f"🔑 Выпал **{quantity}** {key_word} "
-                    f"от кейса **{case['name']}** ({rarity_name})."
-                )
-            )
-            return
-
-        await message.edit(content="❌ Неизвестная награда.")
+    @bot.tree.command(name="wheel_info", description="Посмотреть награды почасового колеса")
+    async def wheel_info(interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="🎡 Награды почасового колеса",
+            description="Крутить можно **раз в час**. Все выигрыши падают в /inventory.\n\n",
+            color=0x9C27B0,
+        )
+        embed.add_field(name="Шансы выпадения", value=_rewards_text(), inline=False)
+        embed.set_footer(text="Валюты не конвертируются. Pity: после 10 пустых — редкий ключ.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)

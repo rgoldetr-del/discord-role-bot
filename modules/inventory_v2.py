@@ -544,9 +544,47 @@ class InventoryV2View(ui.View):
         self.opened_item = item
         await self.render_item_card(interaction, getattr(self, "_data", {}), {})
 
+    async def render_case_card(self, interaction: discord.Interaction, entry: dict):
+        """Карточка кейса из инвентаря: количество, ключи, кнопка открытия."""
+        from .role_actions import CaseOpenButton
+
+        case = entry["case"]
+        self.clear_items()
+
+        emoji = get_rarity_emoji(case["case_rarity"])
+        can_open = entry["amount"] >= 1 and entry["keys"] >= 1
+
+        embed = discord.Embed(
+            title=f"📦 {emoji} Кейс «{case['name']}»",
+            color=self.rarity_color(case["case_rarity"]),
+        )
+        embed.add_field(name="Кейсов у тебя", value=f"**{entry['amount']}**", inline=True)
+        embed.add_field(name="Ключей у тебя", value=f"**{entry['keys']}**", inline=True)
+        embed.add_field(name="Редкость", value=get_rarity_name(case["case_rarity"]), inline=True)
+
+        if not can_open:
+            embed.description = "Нужен **кейс + ключ**. Купить: /shop → вкладка 📦 Кейсы / 🔑 Ключи."
+
+        lines = [f"{get_rarity_emoji(r['rarity'])} {get_rarity_name(r['rarity'])} — {r['drop_chance']}%"
+                 for r in case.get("rarities", [])]
+        if lines:
+            embed.add_field(name="Шансы редкостей", value="\n".join(lines), inline=False)
+
+        if can_open:
+            self.add_item(CaseOpenButton(self.guild_id, self.user_id, case["id"]))
+        self.add_item(InventoryBackButton(self))
+
+        await deliver_message(interaction, embed=embed, view=self)
+
     async def render_item_card(self, interaction: discord.Interaction, data: dict, counts: dict):
         guild = interaction.guild
         item = self.opened_item
+
+        # кейс из player_cases (dict с ключами "case"/"amount"/"keys")
+        if isinstance(item, dict) and "case" in item:
+            await self.render_case_card(interaction, item)
+            return
+
         self.clear_items()
 
         if item.get("role_type") == "visual":

@@ -241,7 +241,7 @@ class ShopView(ui.View):
                 if self.tab == TAB_CASES:
                     if c["is_free"]:
                         status = "🆓 бесплатно!" if free_cd == 0 else f"<t:{int(time.time()) + free_cd}:R>"
-                        lines.append(f"{emoji} **{c['name']}** — 🆓 {status} (1 раз в час)")
+                        lines.append(f"{emoji} **{c['name']}** — 🆓 {status} (кейс + ключ, 1 раз в час)")
                         continue
                     price = await apply_discount(self.user_id, self.guild_id, c["case_coins"])
                     cry = f" • 💎 {fmt(c['case_crystals'])}" if c["case_crystals"] > 0 else ""
@@ -403,7 +403,8 @@ class ShopView(ui.View):
             result = await db.claim_free_case(user_id, guild_id)
             if result["success"]:
                 await interaction.response.send_message(
-                    f"🎁 Ты получил бесплатный кейс **{result['case_name']}**! Жди <t:{int(time.time()) + 3600}:R>.\n"
+                    f"🎁 Ты получил бесплатный **{result['case_name']}** + 🔑 ключ к нему! "
+                    f"Жди <t:{int(time.time()) + 3600}:R>.\n"
                     f"Открыть: /inventory → 📦 Кейсы",
                     ephemeral=True,
                 )

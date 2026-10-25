@@ -9,7 +9,7 @@ import logging
 import discord
 from discord import ui
 
-from database import db
+from database import db, EFFECTS
 from .shared import can_manage
 
 log = logging.getLogger(__name__)
@@ -228,9 +228,9 @@ class AdminMainView(ui.View):
             or [self._opt("— нет кейсов —", "0")]
         eff_opts = [
             self._opt(name, name, emoji=info.get("emoji"))
-            for name, info in db.EFFECTS.items()
+            for name, info in EFFECTS.items()
         ]
-        view = GiveMenu(self.user_id, self.guild_id, cases, db.EFFECTS)
+        view = GiveMenu(self.user_id, self.guild_id, cases, EFFECTS)
         view.give_case_sel.options = case_opts
         view.give_key_sel.options = list(case_opts)
         view.give_effect_sel.options = eff_opts

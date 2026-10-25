@@ -90,7 +90,8 @@ class Database:
         key_price: int,
         case_crystal_price: int = 0,
         key_crystal_price: int = 0,
-        is_free: int = 0
+        is_free: int = 0,
+        active: bool = False,
     ) -> int:
         """Создать кейс и вернуть его ID. is_free=1 — бесплатный кейс (раз в час)."""
         async with self.db.execute(
@@ -98,10 +99,10 @@ class Database:
             INSERT INTO cases
                 (guild_id, name, case_rarity, case_price, key_price,
                  case_crystal_price, key_crystal_price, is_active, is_free)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (guild_id, name, case_rarity, case_price, key_price,
-             case_crystal_price, key_crystal_price, 1 if is_free else 0)
+             case_crystal_price, key_crystal_price, 1 if active else 0, 1 if is_free else 0)
         ) as cursor:
             await self.db.commit()
             return cursor.lastrowid
@@ -747,10 +748,10 @@ class Database:
         if not ok:
             await self.reset_free_case(user_id, guild_id)
             return {"success": False, "error": "Достигнут лимит хранения (50 шт.)."}
-        return {"success": True, "case_id": case["id"], "case_name": case["name"]}
+        await self.add_key(user_id, guild_id, case["id"], 1)
+        return {"success": True, "case_id": case["id"], "case_name": case["name"], "key_given": True}
 
     async def free_case_cooldown_left(self, user_id: int, guild_id: int) -> int:
-        await self.get_or_create_user(user_id, guild_id)
         user = await self.get_or_create_user(user_id, guild_id)
         left = 3600 - (int(time.time()) - (user.get("last_free_case") or 0))
         return max(0, int(left))

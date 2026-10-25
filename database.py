@@ -1124,7 +1124,7 @@ class Database:
     # ===== Ключи и кейсы игроков =====
 
     async def add_key(self, user_id: int, guild_id: int, case_id: int, quantity: int = 1):
-        from modules.economy_utils import MAX_PLAYER_KEYS
+        from modules.shared import MAX_PLAYER_KEYS
 
         row = await self._fetchone(
             "SELECT quantity FROM player_keys WHERE user_id = ? AND guild_id = ? AND case_id = ?",
@@ -1159,7 +1159,7 @@ class Database:
         return True
 
     async def add_case(self, user_id: int, guild_id: int, case_id: int, quantity: int = 1):
-        from modules.economy_utils import MAX_PLAYER_CASES
+        from modules.shared import MAX_PLAYER_CASES
 
         row = await self._fetchone(
             "SELECT quantity FROM player_cases WHERE user_id = ? AND guild_id = ? AND case_id = ?",

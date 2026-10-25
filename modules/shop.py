@@ -24,6 +24,17 @@ from .shared import get_rarity_emoji, get_rarity_name
 _pay_locks: dict[tuple, float] = {}
 
 
+async def apply_discount(user_id: int, guild_id: int, price: int) -> int:
+    """Возвращает цену с учётом эффекта «Скидка» (-10%). Скидка действует
+    только на оплату монетами; цены в кристаллах не меняются.
+    Округление вверх, чтобы нулевая цена осталась нулевой."""
+    if price <= 0:
+        return 0
+    if await db.has_effect(user_id, guild_id, "discount"):
+        return max(1, -(-price * 90 // 100))  # ceil(price * 0.9)
+    return price
+
+
 async def _acquire_pay_lock(user_id: int, guild_id: int) -> bool:
     key = (user_id, guild_id)
     now = time.monotonic()

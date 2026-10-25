@@ -45,14 +45,26 @@ class CreateCaseModal(ui.Modal, title="Создать кейс"):
         required=True
     )
     case_price = ui.TextInput(
-        label="Цена кейса",
-        placeholder="Например: 100",
+        label="Цена кейса (монеты, 0 = бесплатно / недоступно)",
+        placeholder="Например: 100 или 0",
         max_length=12,
         required=True
     )
     key_price = ui.TextInput(
-        label="Цена ключа",
-        placeholder="Например: 50",
+        label="Цена ключа (монеты, 0 = бесплатно / недоступно)",
+        placeholder="Например: 50 или 0",
+        max_length=12,
+        required=True
+    )
+    case_crystal_price = ui.TextInput(
+        label="Цена кейса (кристаллы, 0 = покупка за кристаллы выключена)",
+        placeholder="Например: 10 или 0",
+        max_length=12,
+        required=True
+    )
+    key_crystal_price = ui.TextInput(
+        label="Цена ключа (кристаллы, 0 = покупка за кристаллы выключена)",
+        placeholder="Например: 5 или 0",
         max_length=12,
         required=True
     )
@@ -78,20 +90,25 @@ class CreateCaseModal(ui.Modal, title="Создать кейс"):
         try:
             case_price = int(self.case_price.value.strip())
             key_price = int(self.key_price.value.strip())
+            case_crystal_price = int(self.case_crystal_price.value.strip())
+            key_crystal_price = int(self.key_crystal_price.value.strip())
         except ValueError:
             await interaction.response.send_message("❌ Цены должны быть числами.", ephemeral=True)
             return
 
-        if case_price < 0 or key_price < 0:
-            await interaction.response.send_message("❌ Цены не могут быть отрицательными.", ephemeral=True)
+        if min(case_price, key_price, case_crystal_price, key_crystal_price) < 0:
+            await interaction.response.send_message(
+                "❌ Цены не могут быть отрицательными (0 — разрешено).", ephemeral=True)
             return
 
-        await db.create_case(
+        await db.create_case_return_id(
             interaction.guild.id,
             self.name.value.strip(),
             rarity_key,
             case_price,
-            key_price
+            key_price,
+            case_crystal_price=case_crystal_price,
+            key_crystal_price=key_crystal_price,
         )
 
         await interaction.response.send_message("✅ Кейс создан.", ephemeral=True)
@@ -116,7 +133,7 @@ class CaseSettingsModal(ui.Modal):
         )
 
         self.case_price_input = ui.TextInput(
-            label="Цена кейса",
+            label="Цена кейса (монеты, 0 = бесплатно / недоступно)",
             default=str(case["case_price"]),
             max_length=12,
             required=True,
@@ -124,16 +141,34 @@ class CaseSettingsModal(ui.Modal):
         )
 
         self.key_price_input = ui.TextInput(
-            label="Цена ключа",
+            label="Цена ключа (монеты, 0 = бесплатно / недоступно)",
             default=str(case["key_price"]),
             max_length=12,
             required=True,
             custom_id=f"key_price_{uuid.uuid4().hex[:6]}"
         )
 
+        self.case_crystal_input = ui.TextInput(
+            label="Цена кейса (кристаллы, 0 = покупка за кристаллы выключена)",
+            default=str(case.get("case_crystal_price") or 0),
+            max_length=12,
+            required=True,
+            custom_id=f"case_cry_{uuid.uuid4().hex[:6]}"
+        )
+
+        self.key_crystal_input = ui.TextInput(
+            label="Цена ключа (кристаллы, 0 = покупка за кристаллы выключена)",
+            default=str(case.get("key_crystal_price") or 0),
+            max_length=12,
+            required=True,
+            custom_id=f"key_cry_{uuid.uuid4().hex[:6]}"
+        )
+
         self.add_item(self.name_input)
         self.add_item(self.case_price_input)
         self.add_item(self.key_price_input)
+        self.add_item(self.case_crystal_input)
+        self.add_item(self.key_crystal_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         if interaction.user.id != self.view_ref.user_id or not can_manage_cases(interaction):
@@ -143,15 +178,24 @@ class CaseSettingsModal(ui.Modal):
         try:
             case_price = int(self.case_price_input.value.strip())
             key_price = int(self.key_price_input.value.strip())
+            case_crystal_price = int(self.case_crystal_input.value.strip())
+            key_crystal_price = int(self.key_crystal_input.value.strip())
         except ValueError:
             await interaction.response.send_message("❌ Цены должны быть числами.", ephemeral=True)
+            return
+
+        if min(case_price, key_price, case_crystal_price, key_crystal_price) < 0:
+            await interaction.response.send_message(
+                "❌ Цены не могут быть отрицательными (0 — разрешено).", ephemeral=True)
             return
 
         success = await db.update_case_settings(
             self.view_ref.case_id,
             self.name_input.value.strip(),
             case_price,
-            key_price
+            key_price,
+            case_crystal_price=case_crystal_price,
+            key_crystal_price=key_crystal_price,
         )
 
         if not success:

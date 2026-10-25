@@ -156,13 +156,19 @@ class AdminMainView(ui.View):
     def check_owner(self, interaction: discord.Interaction) -> bool:
         return interaction.user.id == self.user_id and can_manage(interaction)
 
+    async def _respond_denied(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
+        except discord.HTTPException:
+            pass
+
     async def on_error(self, interaction: discord.Interaction, error: Exception, item):
         # защитный обработчик: не «глушить» view при ошибке кнопки
         print(f"[admin view error] {error!r}")
 
     @ui.button(label="🛠 Кейсы", style=discord.ButtonStyle.primary, custom_id="adm:cases")
     async def cases_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
-        if not self.check_owner(interaction):
+        if not AdminMainView.check_owner(self, interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
             return
         from .case_admin import CaseAdminListView
@@ -173,7 +179,7 @@ class AdminMainView(ui.View):
 
     @ui.button(label="🎁 Выдать", style=discord.ButtonStyle.success, custom_id="adm:give")
     async def give_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
-        if not self.check_owner(interaction):
+        if not AdminMainView.check_owner(self, interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
             return
         cases = [dict(c) for c in await db.get_all_cases(self.guild_id, active_only=False)]
@@ -193,7 +199,7 @@ class AdminMainView(ui.View):
 
     @ui.button(label="🔄 Сброс", style=discord.ButtonStyle.danger, custom_id="adm:reset")
     async def reset_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
-        if not self.check_owner(interaction):
+        if not AdminMainView.check_owner(self, interaction):
             await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
             return
 

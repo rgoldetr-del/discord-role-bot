@@ -931,19 +931,9 @@ class RarityAdminView(ui.View):
 
 
 def register(bot):
-    @bot.tree.command(name="case_admin", description="Управление кейсами (владелец сервера / администратор)")
-    async def case_admin(interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.send_message("Только на сервере.", ephemeral=True)
-            return
-
-        if not can_manage_cases(interaction):
-            await interaction.response.send_message(
-                "❌ Управление кейсами доступно только владельцу сервера или администратору.",
-                ephemeral=True
-            )
-            return
-
-        view = CaseAdminListView(interaction.user.id, interaction.guild.id, interaction.guild)
-        await interaction.response.send_message("Загрузка панели кейсов...", ephemeral=True)
-        await view.refresh(interaction)
+    # Панели кейсов живут внутри этой панели и открываются из /admin.
+    # Отдельная команда /case_admin удалена — вся админ-логика собрана в /admin.
+    try:
+        bot.tree.remove_command("case_admin")
+    except KeyError:
+        pass

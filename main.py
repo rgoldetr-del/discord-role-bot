@@ -41,6 +41,7 @@ MODULES = [
     "auctions",     # /auction — аукционы
     "minigames",    # /games — все мини-игры
     "admin",        # /admin — единая админ-панель (кейсы, выдача, сбросы)
+    "case_admin",   # панели управления кейсами (открываются из /admin; auto_roles — её библиотека)
 ]
 
 for module_name in MODULES:
@@ -89,6 +90,14 @@ bot.setup_hook = setup_hook
 @bot.event
 async def on_ready():
     log.info("Бот запущен как %s", bot.user)
+
+    # фоновые задачи модулей (авто-завершение аукционов раз в час)
+    try:
+        from modules.auctions import auction_loop
+        if not auction_loop.is_running():
+            auction_loop.start()
+    except Exception:
+        log.exception("Не удалось запустить auction_loop")
 
 
 if __name__ == "__main__":

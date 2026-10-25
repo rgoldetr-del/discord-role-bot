@@ -1606,6 +1606,39 @@ class Database:
             (guild_id, now)
         )
 
+    async def finalize_auction(self, auction_id: int) -> bool:
+        """Завершить аукцион: продать роль победителю или вернуть продавцу."""
+        auction = await self._fetchone("SELECT * FROM auctions WHERE id = ?", (auction_id,))
+        if not auction or int(datetime.now().timestamp()) < auction["end_time"]:
+            return False
+
+        item = await self._fetchone(
+            "SELECT * FROM inventory WHERE id = ?", (auction["inventory_id"],)
+        )
+
+        if auction["highest_bidder"] and auction["current_bid"] and item:
+            # Победитель получает роль, монеты удержаны при ставке — списывать повторно не нужно.
+            await self.db.execute(
+                "UPDATE inventory SET user_id = ?, is_applied = 0 WHERE id = ?",
+                (auction["highest_bidder"], auction["inventory_id"])
+            )
+        elif item:
+            # Ставок не было — снимаем блокировку, роль остаётся у продавца.
+            await self.db.execute(
+                "UPDATE inventory SET is_applied = 0 WHERE id = ? AND is_applied = 2",
+                (auction["inventory_id"],)
+            )
+
+        await self.db.execute("DELETE FROM auctions WHERE id = ?", (auction_id,))
+        await self.db.commit()
+        return True
+
+    async def get_finished_auctions(self):
+        now = int(datetime.now().timestamp())
+        return await self._fetchall(
+            "SELECT * FROM auctions WHERE end_time <= ?", (now,)
+        )
+
     # ===== Прокачиваемые роли и дебаффы =====
 
     async def get_upgradeable_role_level(self, user_id: int, guild_id: int, role_type: str) -> int:

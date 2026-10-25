@@ -106,16 +106,22 @@ class GiveMenu(ui.View):
 
     async def _open_modal(self, interaction: discord.Interaction, kind: str, item_id=None):
         if not self._check(interaction):
-            await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
+            await _safe_send(interaction, "❌ Нет доступа.")
             return
-        await interaction.response.send_modal(GiveItemModal(interaction.guild, kind, item_id))
+        try:
+            await interaction.response.send_modal(GiveItemModal(interaction.guild, kind, item_id))
+        except discord.NotFound:
+            log.warning("Интеракция устарела (404) — модалка не открыта")
 
+    # Коллбэки кнопок/селектов: официальный discord.py вызывает callback(interaction),
+    # форки на хостингах — callback(interaction, item). Шим в main.py приводит оба
+    # варианта к сигнатуре метода, поэтому здесь канонический вид (self, interaction).
     @ui.button(label="💰 Монеты", style=discord.ButtonStyle.success, custom_id="adm:give:coins")
-    async def give_coins(self, interaction: discord.Interaction, button):
+    async def give_coins(self, interaction: discord.Interaction):
         await self._open_modal(interaction, "coins")
 
     @ui.button(label="💎 Кристаллы", style=discord.ButtonStyle.primary, custom_id="adm:give:crystals")
-    async def give_crystals(self, interaction: discord.Interaction, button):
+    async def give_crystals(self, interaction: discord.Interaction):
         await self._open_modal(interaction, "crystals")
 
     @ui.select(placeholder="📦 Выдать кейс…", custom_id="adm:give:case_sel")
@@ -195,41 +201,47 @@ class AdminMainView(ui.View):
         # защитный обработчик: не «глушить» view при ошибке кнопки
         log.exception("Ошибка кнопки админ-панели", exc_info=error)
 
+    @staticmethod
+    def _opt(label: str, value: str, emoji: str = None, description: str = None):
+        """discord.ui.SelectOption не существует — только discord.SelectOption."""
+        return discord.SelectOption(label=label[:100], value=value,
+                                   emoji=emoji, description=(description or "")[:100] or None)
+
     @ui.button(label="🛠 Кейсы", style=discord.ButtonStyle.primary, custom_id="adm:cases")
-    async def cases_btn(self, interaction: discord.Interaction, button):
+    async def cases_btn(self, interaction: discord.Interaction):
         if not self._is_owner(self.user_id, interaction):
-            await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
+            await _safe_send(interaction, "❌ Нет доступа.")
             return
         from .case_admin import CaseAdminListView
         panel = CaseAdminListView(self.user_id, self.guild_id, interaction.guild)
         # добавим кнопку возврата в меню /admin
         panel.add_item(_BackToAdminButton(self.user_id, self.guild_id))
-        await interaction.response.edit_message(content=None, embed=None, view=panel)
+        await _safe_edit(interaction, content=None, embed=None, view=panel)
 
     @ui.button(label="🎁 Выдать", style=discord.ButtonStyle.success, custom_id="adm:give")
-    async def give_btn(self, interaction: discord.Interaction, button):
+    async def give_btn(self, interaction: discord.Interaction):
         if not self._is_owner(self.user_id, interaction):
-            await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
+            await _safe_send(interaction, "❌ Нет доступа.")
             return
         cases = [dict(c) for c in await db.get_all_cases(self.guild_id, active_only=False)]
-        case_opts = [ui.SelectOption(label=c["name"][:100], value=str(c["id"])) for c in cases[:25]] \
-            or [ui.SelectOption(label="— нет кейсов —", value="0")]
+        case_opts = [self._opt(c["name"], str(c["id"])) for c in cases[:25]] \
+            or [self._opt("— нет кейсов —", "0")]
         eff_opts = [
-            ui.SelectOption(label=f"{info.get('emoji', '✨')} {name}"[:100], value=name)
+            self._opt(name, name, emoji=info.get("emoji"))
             for name, info in db.EFFECTS.items()
         ]
         view = GiveMenu(self.user_id, self.guild_id, cases, db.EFFECTS)
         view.give_case_sel.options = case_opts
-        view.give_key_sel.options = case_opts
+        view.give_key_sel.options = list(case_opts)
         view.give_effect_sel.options = eff_opts
         await _safe_edit(interaction,
                          content="🎁 **Что выдать?** Кнопки — валюта, списки — предметы.",
                          embed=None, view=view)
 
     @ui.button(label="🔄 Сброс", style=discord.ButtonStyle.danger, custom_id="adm:reset")
-    async def reset_btn(self, interaction: discord.Interaction, button):
+    async def reset_btn(self, interaction: discord.Interaction):
         if not self._is_owner(self.user_id, interaction):
-            await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
+            await _safe_send(interaction, "❌ Нет доступа.")
             return
 
         class ResetModal(ui.Modal, title="Сброс кулдаунов"):
@@ -256,7 +268,34 @@ class AdminMainView(ui.View):
                 await inter.response.send_message(
                     f"✅ Сброшено {', '.join(done)} для {member.mention}.", ephemeral=True)
 
-        await interaction.response.send_modal(ResetModal())
+        await _safe_modal(interaction, ResetModal())
+
+
+def _modal_ok(func):
+    """Обёртка коллбэков кнопок/селектов: защищает отSignatureMismatch на разных версиях discord.py.
+
+    Официальный discord.py вызывает callback(self, interaction), форк с хостинга —
+    callback(interaction, item). Функция принимает (self, interaction) и сама определяет,
+    какой из аргументов настоящий Interaction; внутри — чистый async код без ui-декораторов.
+    Возвращает готовый коллбэк для присваивания button.callback / select.callback.
+    """
+    async def wrapper(a, b=None):
+        inter = a if isinstance(a, discord.Interaction) else b
+        if inter is None:
+            log.error("Коллбэк вызван без Interaction")
+            return
+        await func(inter)
+    return wrapper
+
+
+async def _safe_modal(interaction: discord.Interaction, modal: ui.Modal):
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send("⚠️ Интеракция устарела, повтори команду.", ephemeral=True)
+        else:
+            await interaction.response.send_modal(modal)
+    except discord.NotFound:
+        log.warning("Интеракция устарела (404) — модалка не открыта")
 
 
 class _BackToAdminButton(ui.Button):

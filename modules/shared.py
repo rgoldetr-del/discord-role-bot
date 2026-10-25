@@ -1,9 +1,38 @@
 # modules/shared.py
 # Обновлённый общий модуль: редкости, кулдауны, доставка, роли, валюта.
 
+import inspect
 from datetime import datetime
 
 import discord
+
+
+def normalize_callback(func):
+    """Совместимость коллбэков кнопок/селектов с разными сборками discord.py.
+
+    Официальный discord.py вызывает callback(interaction), а форки (например,
+    discord-ui-callbacks на хостинге) — callback(interaction, item).
+    Возвращает обёртку, которая определяет Interaction по isinstance среди
+    переданных аргументов и вызывает оригинал в нужной сигнатуре.
+    """
+    if getattr(func, "_norm_cb", False):
+        return func
+    sig = inspect.signature(func)
+    accepts_item = len([p for p in sig.parameters.values()
+                        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]) >= 2
+
+    async def wrapper(*args):
+        interaction = next((a for a in args if isinstance(a, discord.Interaction)), None)
+        if interaction is None:
+            raise TypeError("normalize_callback: среди аргументов нет Interaction")
+        item = next((a for a in args if isinstance(a, discord.ui.Item)), None)
+        if accepts_item:
+            await func(interaction, item)
+        else:
+            await func(interaction)
+
+    wrapper._norm_cb = True
+    return wrapper
 
 from database import db
 

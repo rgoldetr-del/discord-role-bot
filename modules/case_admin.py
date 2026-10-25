@@ -484,7 +484,7 @@ class CaseAdminListView(ui.View):
         await self.refresh(interaction)
 
     @ui.button(label="⚡ Готовые пресеты", style=discord.ButtonStyle.primary, custom_id="ca:preset")
-    async def preset_btn(self, interaction: discord.Interaction, button):
+    async def preset_btn(self, interaction: discord.Interaction):
         """Создать 7 готовых кейсов с редкостями и ролями (из старого /case_preset_full)."""
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)

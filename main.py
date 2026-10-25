@@ -9,6 +9,41 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+# --- Совместимость UI-коллбэков с разными сборками discord.py -----------------
+# Официальный discord.py вызывает callback(interaction), форки на хостингах —
+# callback(interaction, item). Шим определяет настоящий Interaction по типу
+# аргументов и вызывает метод view в его сигнатуре (self, interaction[, button]).
+import inspect as _inspect
+
+
+def _compat_callback(cb, parent):
+    try:
+        params = [p for p in _inspect.signature(cb).parameters.values()
+                  if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    except (ValueError, TypeError):
+        return cb
+
+    async def wrapped(*args):
+        interaction = next((a for a in args if type(a).__name__ == "Interaction"), None)
+        n = len(params)
+        if n >= 3:
+            item = next((a for a in args if isinstance(a, __import__("discord.ui", fromlist=["Item"]).Item)), None)
+            return await cb(parent, interaction, item)
+        if n == 2:
+            return await cb(parent, interaction)
+        return await cb(interaction)
+
+    return wrapped
+
+
+try:
+    from discord.ui.item import _ItemCallback as _IC
+
+    _IC.__call__ = lambda self, *args: _compat_callback(self.callback, self.parent)(*args)
+except Exception:  # на других сборках путь может отличаться — не критично
+    pass
+# -----------------------------------------------------------------------------
+
 from database import db
 
 load_dotenv()

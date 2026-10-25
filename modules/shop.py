@@ -518,9 +518,20 @@ class ShopView(ui.View):
                     await interaction.response.send_message(f"❌ Нужно 💰 {fmt(price)} монет.", ephemeral=True)
 
     async def refresh_after_purchase(self, interaction: discord.Interaction):
+        """Обновить исходное сообщение магазина после покупки.
+
+        ВАЖНО: handle_pay всегда отвечает ephemeral-сообщением через
+        interaction.response.send_message(...) — до этого метода. Поэтому
+        edit_original_response/handle к этому же interaction НЕПРИМЕНИМЫ
+        (Discord отвечает 404 Unknown interaction — именно эта ошибка была
+        в логах хостинга). Правильно: редактировать исходное сообщение /shop
+        напрямую через interaction.message.edit(...).
+        """
         self.opened = None
         try:
-            await self.refresh(interaction)
+            msg = getattr(interaction, "message", None)
+            if msg is not None:
+                await msg.edit(view=self)
         except discord.HTTPException:
             pass
 

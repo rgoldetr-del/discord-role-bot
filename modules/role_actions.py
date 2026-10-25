@@ -80,15 +80,10 @@ def get_item_name(guild: discord.Guild, item: dict) -> str:
         return "💀 Кривая рука"
 
     if item.get("role_type") == "effect":
-        names = {
-            "shield": "🛡️ Щит",
-            "discount": "🏷️ Скидка",
-            "income": "💼 Доход",
-            "critic": "⚡ Критик",
-            "crystal_guard": "💎 Хранитель кристаллов",
-            "high_roller": "🔥 Азарт"
-        }
-        return names.get(item.get("rarity"), "✨ Эффект")
+        # единый справочник имён — из database.EFFECTS (без дублирования)
+        from database import EFFECTS as _EFFECTS
+        info = _EFFECTS.get(item.get("rarity"))
+        return info["name"] if info else "✨ Эффект"
 
     role = guild.get_role(item.get("role_id"))
     return role.name if role else f"Роль {item.get('role_id')}"

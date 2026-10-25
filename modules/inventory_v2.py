@@ -16,7 +16,7 @@ import time
 import discord
 from discord import app_commands, ui
 
-from database import db
+from database import db, EFFECTS
 from .shared import (
     safe_command,
     check_cooldown,
@@ -53,16 +53,11 @@ RARITY_ORDER = {
     "luck": 7, "rich": 8, "shield": 9, "discount": 10,
     "income": 11, "critic": 12, "crystal_guard": 13,
     "high_roller": 14, "clumsy_hands": 15,
+    "luck_charm": 16,
 }
 
-EFFECT_INFO = {
-    "shield": ("🛡️ Щит", "Защищает от дебаффа «Кривая рука» при открытии кейсов."),
-    "discount": ("🏷️ Скидка", "Скидка 10% на покупку кейсов и ключей."),
-    "income": ("💼 Пассивный доход", "Раз в день можно получить 100 монет командой /daily."),
-    "critic": ("⚡ Критик", "10% шанс увеличить выигрыш в мини-играх на 25%."),
-    "crystal_guard": ("💎 Хранитель кристаллов", "15% шанс не потерять кристаллы при проигрыше."),
-    "high_roller": ("🔥 Азарт", "Увеличивает максимальные ставки в мини-играх в 1.5 раза."),
-}
+# Единый справочник эффектов — берём из database.EFFECTS (не дублируем).
+EFFECT_INFO = {key: (info["name"], info["description"]) for key, info in EFFECTS.items()}
 
 UPGRADE_INFO = {
     "luck": ("🍀 Удача", "+1% к шансу редких выпадений за уровень в колесе и кейсах."),
@@ -443,7 +438,11 @@ class InventoryV2View(ui.View):
                 label = f"{name} lvl.{item['level']}"
             elif self.tab == TAB_EFFECTS:
                 name, _ = EFFECT_INFO.get(item["rarity"], ("✨ Эффект", ""))
-                status = "✅" if item["is_applied"] else "⏸️"
+                active = int(item.get("effect_expires_at") or 0) > int(time.time())
+                if not active:
+                    status = "⌛"
+                else:
+                    status = "✅" if item["is_applied"] else "⏸️"
                 label = f"{status} {name}"
             else:
                 emoji = get_rarity_emoji(item["rarity"])
@@ -521,15 +520,20 @@ class InventoryV2View(ui.View):
         if not items:
             return (
                 "**✨ Эффекты** дают пассивные бонусы.\n"
-                "Магазин эффектов: `/shop → ✨ Эффекты` (покупка за кристаллы)."
+                "Магазин эффектов: `/shop → ✨ Эффекты` (покупка за монеты, действуют 1 час)."
             )
 
-        lines = ["**✨ Активные эффекты:**", ""]
+        now = int(time.time())
+        lines = ["**✨ Эффекты (действуют 1 час после покупки):**", ""]
 
         for item in items:
-            name, desc = EFFECT_INFO.get(item["rarity"], ("✨ Эффект", ""))
-            status = "✅ включён" if item["is_applied"] else "⏸️ выключен"
-            lines.append(f"{name} — {status}\n↳ {desc}")
+            name, _ = EFFECT_INFO.get(item["rarity"], ("✨ Эффект", ""))
+            expires = int(item.get("effect_expires_at") or 0)
+            if expires <= now:
+                lines.append(f"{name} — ⌛ истёк (<t:{expires}:R>)")
+            else:
+                status = "✅ активен" if item["is_applied"] else "⏸️ выключен"
+                lines.append(f"{name} — {status} до <t:{expires}:R>")
 
         return "\n".join(lines)
 
@@ -612,6 +616,11 @@ class InventoryV2View(ui.View):
         elif item["role_type"] == "effect":
             _, desc = EFFECT_INFO.get(item["rarity"], ("✨ Эффект", ""))
             embed.add_field(name="Эффект", value=desc, inline=False)
+            expires = int(item.get("effect_expires_at") or 0)
+            if expires > int(time.time()):
+                embed.add_field(name="⏳ Истекает", value=f"через <t:{expires}:R>", inline=True)
+            else:
+                embed.add_field(name="⌛ Статус", value="истёк — продли в /shop → ✨ Эффекты", inline=True)
 
         if locked:
             embed.set_footer(text="🔒 Предмет участвует на рынке или аукционе — действия недоступны.")

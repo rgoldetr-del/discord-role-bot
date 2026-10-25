@@ -6,7 +6,7 @@ from discord import app_commands
 
 from database import db
 from .shared import (
-from .shop import _safe_send
+    safe_command,
     check_cooldown,
     safe_remove_role,
     get_rarity_emoji,
@@ -16,7 +16,7 @@ from .shop import _safe_send
 
 def register(bot):
     @bot.tree.command(name="market", description="Посмотреть маркетплейс")
-    @_safe_send
+    @safe_command
     async def market(interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)
@@ -58,7 +58,7 @@ def register(bot):
 
     @bot.tree.command(name="market_sell", description="Выставить роль на продажу")
     @app_commands.describe(inventory_id="ID роли из инвентаря", price="Цена в монетах")
-    @_safe_send
+    @safe_command
     async def market_sell(interaction: discord.Interaction, inventory_id: int, price: int):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)
@@ -89,7 +89,7 @@ def register(bot):
 
     @bot.tree.command(name="market_buy", description="Купить роль с маркетплейса")
     @app_commands.describe(listing_id="ID лота")
-    @_safe_send
+    @safe_command
     async def market_buy(interaction: discord.Interaction, listing_id: int):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)
@@ -122,7 +122,7 @@ def register(bot):
 
     @bot.tree.command(name="market_cancel", description="Отменить продажу роли")
     @app_commands.describe(listing_id="ID лота")
-    @_safe_send
+    @safe_command
     async def market_cancel(interaction: discord.Interaction, listing_id: int):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)

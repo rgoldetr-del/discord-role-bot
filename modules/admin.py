@@ -323,21 +323,23 @@ def register(bot):
         pass
 
     @bot.tree.command(name="admin", description="Единая админ-панель: кейсы, выдача, сбросы")
-    @_safe_send
     async def admin(interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.send_message("Только на сервере.", ephemeral=True)
-            return
-        if not can_manage(interaction):
-            await interaction.response.send_message(
-                "❌ Доступно только владельцу сервера или администратору.", ephemeral=True)
-            return
+        try:
+            if not interaction.guild:
+                await interaction.response.send_message("Только на сервере.", ephemeral=True)
+                return
+            if not can_manage(interaction):
+                await interaction.response.send_message(
+                    "❌ Доступно только владельцу сервера или администратору.", ephemeral=True)
+                return
 
-        embed = discord.Embed(
-            title="🛡 Панель администратора",
-            description=_main_desc(),
-            color=0xE74C3C,
-        )
-        embed.set_footer(text=f"Запросил: {interaction.user.display_name}")
-        await _safe_send(interaction, embed=embed,
-                         view=AdminMainView(interaction.user.id, interaction.guild.id))
+            embed = discord.Embed(
+                title="🛡 Панель администратора",
+                description=_main_desc(),
+                color=0xE74C3C,
+            )
+            embed.set_footer(text=f"Запросил: {interaction.user.display_name}")
+            await _safe_send(interaction, embed=embed,
+                             view=AdminMainView(interaction.user.id, interaction.guild.id))
+        except discord.NotFound:
+            return  # interaction просрочен (ответ >3 сек.) — не баг логики

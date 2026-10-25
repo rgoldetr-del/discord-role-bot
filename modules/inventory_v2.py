@@ -18,7 +18,7 @@ from discord import app_commands, ui
 
 from database import db
 from .shared import (
-from .shop import _safe_send
+    safe_command,
     check_cooldown,
     get_rarity_emoji,
     get_rarity_name,
@@ -658,7 +658,7 @@ def register(bot):
 
     @bot.tree.command(name="inventory", description="Инвентарь: роли, кейсы, улучшения, эффекты")
     @app_commands.describe(user="Посмотреть чужой инвентарь (только просмотр)")
-    @_safe_send
+    @safe_command
     async def inventory_v2(interaction: discord.Interaction, user: discord.Member = None):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)

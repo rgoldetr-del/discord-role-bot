@@ -10,8 +10,7 @@ import discord
 from discord import ui
 
 from database import db
-from .shared import get_rarity_emoji, get_rarity_name, check_cooldown
-from .shop import _safe_send
+from .shared import get_rarity_emoji, get_rarity_name, check_cooldown, safe_command
 
 
 class CaseInfoView(ui.View):
@@ -77,7 +76,7 @@ class CaseInfoView(ui.View):
 
 def register(bot):
     @bot.tree.command(name="case_info", description="Посмотреть награды и шансы кейсов")
-    @_safe_send
+    @safe_command
     async def case_info(interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)

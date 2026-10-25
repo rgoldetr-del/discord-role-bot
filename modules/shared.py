@@ -34,6 +34,29 @@ def normalize_callback(func):
     wrapper._norm_cb = True
     return wrapper
 
+
+def safe_command(fn):
+    """Обёртка slash-команд: перехватывает «Unknown interaction» (404).
+
+    Возникает, когда бот медлит с ответом (>3 сек.) — Discord аннулирует
+    interaction. Это не баг логики: молча игнорируем, чтобы не спамить в
+    ERROR-лог. functools.wraps сохраняет сигнатуру и аннотации типов —
+    tree.command() корректно разбирает параметры команды."""
+    import functools
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            await fn(*args, **kwargs)
+        except discord.NotFound:
+            return
+    # discord.py на некоторых хостингах — патченные сборки, где проверка
+    # "это coroutine" идёт по __code__.co_flags напрямую (обёртка без await
+    # внутри не имеет флага CO_COROUTINE). Восстанавливаем флаг вручную.
+    wrapper.__code__ = wrapper.__code__.replace(co_flags=wrapper.__code__.co_flags | 0x100)
+    wrapper.__annotations__ = getattr(fn, "__annotations__", {})
+    return wrapper
+
 from database import db
 
 RARITY_EMOJI = {

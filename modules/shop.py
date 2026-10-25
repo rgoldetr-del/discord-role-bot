@@ -18,24 +18,10 @@ from discord import ui
 from database import db, EFFECTS
 
 from .persistent_utils import make_id
-from .shared import get_rarity_emoji, get_rarity_name
+from .shared import get_rarity_emoji, get_rarity_name, safe_command
 
 # защита от быстрых повторных кликов «Купить» (anti double-spend)
 _pay_locks: dict[tuple, float] = {}
-
-
-def _safe_send(fn):
-    """Обёртка slash-команд: перехватывает «Unknown interaction» (404).
-
-    Возникает, когда бот медлит с ответом (например, долгий git pull /
-    установка зависимостей при первом запуске) — Discord аннулирует interaction.
-    Это не баг логики: молча игнорируем, чтобы не спамить в ERROR-лог."""
-    async def wrapper(interaction, *args, **kwargs):
-        try:
-            await fn(interaction, *args, **kwargs)
-        except discord.NotFound:
-            return  # interaction аннулирован Discord (3 сек. на ответ) — не баг логики
-    return wrapper
 
 
 async def apply_discount(user_id: int, guild_id: int, price: int) -> int:
@@ -666,7 +652,7 @@ class ShopItemSelect(ui.Select):
 
 def register(bot):
     @bot.tree.command(name="daily", description="Получить ежедневный доход 💼")
-    @_safe_send
+    @safe_command
     async def daily(interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)
@@ -697,7 +683,7 @@ def register(bot):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @bot.tree.command(name="shop", description="Магазин: кейсы, ключи, эффекты, улучшения")
-    @_safe_send
+    @safe_command
     async def shop(interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Только на сервере.", ephemeral=True)

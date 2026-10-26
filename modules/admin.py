@@ -176,9 +176,66 @@ def _main_desc():
         "Выбери раздел:\n\n"
         "🛠 **Кейсы** — создание и настройка кейсов (награды, редкости, цены)\n"
         "🎁 **Выдать** — монеты, кристаллы, кейсы, ключи, эффекты любому игроку\n"
-        "🔄 **Сброс** — сбросить кулдаун колеса или дейли-награды игроку\n\n"
+        "🔄 **Сброс** — сбросить кулдаун колеса или дейли-награды игроку\n"
+        "🧹 **Уборка ролей** — удалить все роли сервера без участников\n\n"
         "⬅ Кнопка «Назад» возвращает в это меню из любого раздела."
     )
+
+
+async def delete_empty_roles(interaction: discord.Interaction):
+    """Удалить все роли гильдии, у которых 0 участников.
+
+    Безопасно: пропускаем @everyone, управляющие (managed) роли ботов/интеграций,
+    административные роли и роли выше ранга бота (их мы всё равно не удалим).
+    """
+    guild = interaction.guild
+    me = guild.me
+
+    if not me.guild_permissions.manage_roles:
+        await interaction.followup.send(
+            "❌ У бота нет разрешения **Управлять ролями**.", ephemeral=True)
+        return
+
+    protected_names = {"Admin", "Administrator", "Админ", "Модер", "Moderator"}
+
+    candidates = [
+        r for r in guild.roles
+        if not r.is_default()                      # @everyone
+        and not r.managed                          # роли ботов/вебхуков/интеграций
+        and len(r.members) == 0                    # нет участников
+        and r.name not in protected_names          # не админ-роли
+        and r < me.top_role                        # ниже ранга бота
+        and r.id != guild.id
+    ]
+
+    if not candidates:
+        await interaction.followup.send("🧹 Пустых ролей не найдено.", ephemeral=True)
+        return
+
+    if len(candidates) > 200:
+        candidates = candidates[:200]  # защита от rate limit за один вызов
+
+    deleted, failed = [], []
+    for role in candidates:
+        try:
+            await role.delete(reason=f"Очистка пустых ролей ({interaction.user})")
+            deleted.append(role.name)
+        except discord.Forbidden:
+            failed.append(f"{role.name} (нет прав)")
+        except discord.HTTPException as e:
+            failed.append(f"{role.name} ({e})")
+
+    lines = [f"✅ Удалено пустых ролей: **{len(deleted)}**"]
+    if deleted:
+        names = ", ".join(f"`{n}`" for n in deleted[:15])
+        more = f" …и ещё {len(deleted) - 15}" if len(deleted) > 15 else ""
+        lines.append(names + more)
+    if failed:
+        lines.append(f"⚠️ Не удалось: {'; '.join(failed[:10])}")
+
+    text = "\n".join(lines)
+    for i in range(0, len(text), 1900):
+        await interaction.followup.send(text[i:i + 1900], ephemeral=True)
 
 
 class AdminMainView(ui.View):
@@ -269,6 +326,26 @@ class AdminMainView(ui.View):
                     f"✅ Сброшено {', '.join(done)} для {member.mention}.", ephemeral=True)
 
         await _safe_modal(interaction, ResetModal())
+
+    @ui.button(label="🧹 Уборка ролей", style=discord.ButtonStyle.secondary, custom_id="adm:cleanroles")
+    async def clean_roles_btn(self, interaction: discord.Interaction):
+        if not self._is_owner(self.user_id, interaction):
+            await _safe_send(interaction, "❌ Нет доступа.")
+            return
+
+        class ConfirmClean(ui.Modal, title="Удаление пустых ролей"):
+            confirm = ui.TextInput(
+                label="Введи DELETE для подтверждения (удалятся все роли без участников)",
+                max_length=10, required=True)
+
+            async def on_submit(self, inter: discord.Interaction):
+                if self.confirm.value.strip().upper() != "DELETE":
+                    await inter.response.send_message("⚠️ Отменено.", ephemeral=True)
+                    return
+                await inter.response.defer(ephemeral=True, thinking=True)
+                await delete_empty_roles(inter)
+
+        await _safe_modal(interaction, ConfirmClean())
 
 
 def _modal_ok(func):

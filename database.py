@@ -1345,7 +1345,13 @@ class Database:
             "SELECT quantity FROM player_keys WHERE user_id = ? AND guild_id = ? AND case_id = ?",
             (user_id, guild_id, case_id)
         )
-        return row["quantity"] if row else 0
+        if row and row["quantity"] > 0:
+            return row["quantity"]
+        # Бесплатные кейсы открываются без ключа (ключ «встроен» в связку).
+        case = await self.get_case_details(case_id)
+        if case and (case.get("is_free") or case.get("key_price", 1) == 0):
+            return 999
+        return 0
 
     async def get_player_case_quantity(self, user_id: int, guild_id: int, case_id: int) -> int:
         row = await self._fetchone(
@@ -1420,9 +1426,13 @@ class Database:
         if not await self.use_case(user_id, guild_id, case_id):
             return {"success": False, "error": "Не удалось использовать кейс."}
 
-        if not await self.use_key(user_id, guild_id, case_id):
-            await self.add_case(user_id, guild_id, case_id, 1)
-            return {"success": False, "error": "Не удалось использовать ключ."}
+        # Ключ нужен только для платных кейсов; бесплатные (is_free / key_price=0)
+        # открываются сразу — «бесплатный ключ» уже встроен в связку.
+        free_case = bool(case_details.get("is_free")) or case_details.get("key_price", 1) == 0
+        if not free_case:
+            if not await self.use_key(user_id, guild_id, case_id):
+                await self.add_case(user_id, guild_id, case_id, 1)
+                return {"success": False, "error": "Не удалось использовать ключ."}
 
         # Записываем историю открытия (для вкладок «Кейсы»/статистики в инвентаре)
         await self.db.execute(

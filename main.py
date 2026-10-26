@@ -99,6 +99,48 @@ except ImportError:
     _UIItem.__setattr__ = _item_setattr
 
 
+# ---------- 2. Совпадение сигнатур on_error между официальной lib и форком ----------
+# Официальный discord.py (2.x) вызывает View.on_error(self, interaction, error, item),
+# форк на хостинге — on_error(interaction, error, item). Если у кастомного view метод
+# объявлен в «форковом» стиле, оборачиваем его так, чтобы оба стиля работали.
+def _patch_view_on_error(view_cls):
+    fn = getattr(view_cls, "on_error", None)
+    if fn is None or getattr(fn, "_onerror_patched", False):
+        return
+    try:
+        params = list(_inspect.signature(fn).parameters.values())
+    except (ValueError, TypeError):
+        return
+    positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    # стандартная официальная сигнатура (self, inter, err, item) — ничего не делаем
+    if len(positional) >= 4:
+        return
+    if len(positional) == 3:  # (interaction, error, item) — стиль форка
+
+        async def patched(self, interaction, error, item):
+            try:
+                await fn(interaction, error, item)
+            except Exception:
+                pass
+
+        patched._onerror_patched = True
+        view_cls.on_error = patched
+
+
+_orig_view_init = discord.ui.view.View.__init__
+
+
+def _view_init_with_onerror_patch(self, *a, **kw):
+    _orig_view_init(self, *a, **kw)
+    try:
+        _patch_view_on_error(type(self))
+    except Exception:
+        pass
+
+
+discord.ui.view.View.__init__ = _view_init_with_onerror_patch
+
+
 # Функция для ручного вызова (не используется автоматически):
 # -----------------------------------------------------------------------------
 

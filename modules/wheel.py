@@ -101,14 +101,16 @@ async def _grant(reward: dict, user_id: int, guild_id: int, active_cases) -> str
 
     if rtype == "key":
         quantity = reward["quantity"]
-        if not active_cases:  # страховка: нет кейсов — отдаём монетами
+        if not active_cases:  # страховка: на сервере нет кейсов — компенсируем монетами
             amount = KEY_FALLBACK_VALUE.get(reward["tier"], 50) * quantity
             await db.update_coins(user_id, guild_id, amount)
-            return f"💰 Ключи закончились. Выпало **{amount}** монет."
+            return (f"💰 На сервере пока нет кейсов — вместо ключей выпало "
+                    f"**{amount:,}** монет.".replace(",", " "))
         case = choose_case_for_key(active_cases, reward["tier"])
         await db.add_key(user_id, guild_id, case["id"], quantity)
         return (f"🔑 Выпало **{quantity}** {plural_keys(quantity)} "
-                f"от кейса **{case['name']}** ({get_rarity_name(case['case_rarity'])}).")
+                f"от кейса **{case['name']}** ({get_rarity_name(case['case_rarity'])}) "
+                f"— лежат в /inventory.")
 
     return "❌ Неизвестная награда."
 

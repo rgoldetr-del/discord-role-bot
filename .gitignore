@@ -1,4 +1,1 @@
-__pycache__/
-*.pyc
-bot_database.db
-.env
+*.db

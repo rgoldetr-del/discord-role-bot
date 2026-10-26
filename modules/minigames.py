@@ -19,7 +19,8 @@ from .shared import (
     award_mixed,
     award_mixed_win,
     format_bet,
-    format_reward
+    format_reward,
+    make_resilient,
 )
 
 MIN_BET_VALUE = 10

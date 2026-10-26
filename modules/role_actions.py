@@ -7,7 +7,7 @@ import discord
 from discord import ui
 
 from database import db
-from .shared import get_rarity_emoji, get_rarity_name, get_role_name
+from .shared import get_rarity_emoji, get_rarity_name, get_role_name, make_resilient
 
 
 FALLBACK_PRICES = {

@@ -225,6 +225,15 @@ for module_name in MODULES:
 
 
 async def setup_hook():
+    # Persistent view registry: интерфейсы (shop/inventory/admin/wheel/...)
+    # переживают timeout и не выдают "View interaction referencing unknown
+    # view ... Discarding" после перезапуска или простоя.
+    try:
+        from modules import persistent
+        persistent.install(bot)
+    except Exception:
+        log.exception("Не удалось установить persistent view registry")
+
     await db.connect()
     log.info("База данных подключена")
 

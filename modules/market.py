@@ -10,7 +10,8 @@ from .shared import (
     check_cooldown,
     safe_remove_role,
     get_rarity_emoji,
-    get_role_name
+    get_role_name,
+    make_resilient,
 )
 
 

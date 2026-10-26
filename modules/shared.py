@@ -2,9 +2,12 @@
 # Обновлённый общий модуль: редкости, кулдауны, доставка, роли, валюта.
 
 import inspect
+import logging
 from datetime import datetime
 
 import discord
+
+log = logging.getLogger("bot.shared")
 
 
 def normalize_callback(func):
@@ -275,6 +278,7 @@ def make_resilient(fn):
     # discord.py проверяет co_flags CO_COROUTINE напрямую — восстанавливаем флаг
     wrapper.__code__ = wrapper.__code__.replace(co_flags=wrapper.__code__.co_flags | 0x100)
     wrapper.__annotations__ = getattr(fn, "__annotations__", {})
+    wrapper._wrapped_by_guard = True   # маркер: не оборачивать повторно
     return wrapper
 
 

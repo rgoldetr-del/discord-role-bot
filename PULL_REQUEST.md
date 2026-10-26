@@ -1,7 +1,7 @@
 # Pull Request: Рефакторинг Discord-бота (экономика, кейсы Terraria, магазин, админ-панель)
 
 **Ветка:** `qwen-code-41960814-bc05-4f88-8b2f-891e1ffff228` → `main`
-**Коммитов:** 20 | **Изменений:** 24 файла, +8244 / −1729
+**Коммитов:** 25 | **Изменений:** 26 файлов, +8962 / −1729
 
 ---
 
@@ -32,13 +32,24 @@ market_buy, market_cancel, market_sell, shop, wheel, wheel_info`
 
 ### Тематика Terraria (`modules/presets_data.py`)
 - 5 наборов × 5 кейсов от дешёвых к дорогим: common → uncommon → rare → epic → legendary/secret+.
-- Отдельный **бесплатный кейс** в магазине (1 раз в час, кулдаун в БД `users.last_free_case`).
+- Отдельный **бесплатный кейс** в магазине: 1 раз в час выдаётся связка **кейс + бесплатный ключ** к нему (`db.claim_free_case`), кулдаун в БД `users.last_free_case`.
 
-### Исправления稳定性 (по логам хостинга)
+### UX-доработки
+- 🔓 **Открытие кейсов — публичное**: результат открывается сообщением на канале (видно всем), а не в ephemeral-ответе.
+- 🧹 `/admin → 🔄 Сбросы → Очистить пустые роли`: удаление всех ролей сервера с 0 участниками (роль @everyone защищена), с подтверждением через модалку.
+- ⏳ Таймеры кулдаунов везде в формате Discord `<t:...:R>` (автообновление времени на клиенте).
+- 🛡 «Неубиваемость»: глобальные перехватчики ошибок (`shared.make_resilient`, `install_global_handler_guard`) — падение одной кнопки/команды больше не роняет обработчик; истёкшие interaction'ы gracefully переносятся в followup.
+
+### Исправления стабильности (по логам хостинга)
 - ✅ `AttributeError: 'Button' object has no attribute 'user'` — шим совместимости UI-коллбэков в `main.py` (официальный discord.py `callback(interaction)` vs форк `callback(interaction, item)`); все обработчики приведены к канонической сигнатуре.
 - ✅ `404 Unknown interaction` — декоратор `safe_command` (`functools.wraps` сохраняет аннотации → tree.command разбирает параметры; перехват `discord.NotFound`; восстановление флага coroutine для патченых сборок).
 - ✅ `module 'discord.ui' has no attribute 'SelectOption'` — замена на совместимый способ задания опций.
 - ✅ `ImportError: auction_loop` / `SyntaxError: from .shop import _safe_send` — общая логика вынесена в `modules/shared.py`, импорты исправлены.
+- ✅ `AttributeError: 'Database' object has no attribute 'EFFECTS'` — `EFFECTS` импортируется как модульная константа, а не атрибут синглтона `db`.
+- ✅ `AttributeError: 'str' object has no attribute 'get'` в `/inventory` — нормализация элементов перед сортировкой по редкости.
+- ✅ `HTTPException 50035 Invalid Form Body (label >45)` — все модалки проекта прогнаны через AST-сканер лимитов Discord (label≤45, placeholder≤100): исправлено 9 мест в `admin.py` и `case_admin.py`.
+- ✅ `/wheel` больше не требует ключи (колесо бесплатное, кулдаун 1 час); кейсы из колеса/магазина открываются своими ключами из инвентаря.
+- ✅ `View interaction referencing unknown view ... Discarding` — убраны `self.stop()`/таймауты у постоянных интерфейсов (timeout=None), custom_id стабильны.
 - ✅ `git`: убраны из репозитория `bot_database.db` и `__pycache__`, обновлён `.gitignore`.
 
 ### База данных (`database.py`)

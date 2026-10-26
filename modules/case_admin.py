@@ -34,26 +34,26 @@ class CreateCaseModal(ui.Modal, title="Создать кейс"):
         required=True
     )
     case_price = ui.TextInput(
-        label="Цена кейса (монеты, 0 = бесплатно / недоступно)",
-        placeholder="Например: 100 или 0",
+        label="Цена кейса (монеты)",
+        placeholder="0 = бесплатно, пустая = недоступно. Например: 100",
         max_length=12,
         required=True
     )
     key_price = ui.TextInput(
-        label="Цена ключа (монеты, 0 = бесплатно / недоступно)",
-        placeholder="Например: 50 или 0",
+        label="Цена ключа (монеты)",
+        placeholder="0 = бесплатно, пустая = недоступно. Например: 50",
         max_length=12,
         required=True
     )
     case_crystal_price = ui.TextInput(
-        label="Цена кейса (кристаллы, 0 = покупка за кристаллы выключена)",
-        placeholder="Например: 10 или 0",
+        label="Цена кейса (кристаллы)",
+        placeholder="0 = покупка за кристаллы выключена. Например: 10",
         max_length=12,
         required=True
     )
     key_crystal_price = ui.TextInput(
-        label="Цена ключа (кристаллы, 0 = покупка за кристаллы выключена)",
-        placeholder="Например: 5 или 0",
+        label="Цена ключа (кристаллы)",
+        placeholder="0 = покупка за кристаллы выключена. Например: 5",
         max_length=12,
         required=True
     )
@@ -122,7 +122,8 @@ class CaseSettingsModal(ui.Modal):
         )
 
         self.case_price_input = ui.TextInput(
-            label="Цена кейса (монеты, 0 = бесплатно / недоступно)",
+            label="Цена кейса (монеты)",
+            placeholder="0 = бесплатно / недоступно",
             default=str(case["case_price"]),
             max_length=12,
             required=True,
@@ -130,7 +131,8 @@ class CaseSettingsModal(ui.Modal):
         )
 
         self.key_price_input = ui.TextInput(
-            label="Цена ключа (монеты, 0 = бесплатно / недоступно)",
+            label="Цена ключа (монеты)",
+            placeholder="0 = бесплатно / недоступно",
             default=str(case["key_price"]),
             max_length=12,
             required=True,
@@ -138,7 +140,8 @@ class CaseSettingsModal(ui.Modal):
         )
 
         self.case_crystal_input = ui.TextInput(
-            label="Цена кейса (кристаллы, 0 = покупка за кристаллы выключена)",
+            label="Цена кейса (кристаллы)",
+            placeholder="0 = кристаллы выключены",
             default=str(case.get("case_crystal_price") or 0),
             max_length=12,
             required=True,
@@ -146,7 +149,8 @@ class CaseSettingsModal(ui.Modal):
         )
 
         self.key_crystal_input = ui.TextInput(
-            label="Цена ключа (кристаллы, 0 = покупка за кристаллы выключена)",
+            label="Цена ключа (кристаллы)",
+            placeholder="0 = кристаллы выключены",
             default=str(case.get("key_crystal_price") or 0),
             max_length=12,
             required=True,

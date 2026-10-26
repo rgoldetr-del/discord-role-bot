@@ -334,8 +334,10 @@ class AdminMainView(ui.View):
             return
 
         class ConfirmClean(ui.Modal, title="Удаление пустых ролей"):
+            # label TextInput ограничен 45 символами (Discord API error 50035)
             confirm = ui.TextInput(
-                label="Введи DELETE для подтверждения (удалятся все роли без участников)",
+                label="Введи DELETE для подтверждения",
+                placeholder="Удалятся ВСЕ роли сервера без участников",
                 max_length=10, required=True)
 
             async def on_submit(self, inter: discord.Interaction):

@@ -10,7 +10,7 @@ import discord
 from discord import ui
 
 from database import db, EFFECTS
-from .shared import can_manage
+from .shared import can_manage, make_resilient
 
 log = logging.getLogger(__name__)
 
@@ -323,23 +323,40 @@ def register(bot):
         pass
 
     @bot.tree.command(name="admin", description="Единая админ-панель: кейсы, выдача, сбросы")
+    @make_resilient
     async def admin(interaction: discord.Interaction):
-        try:
-            if not interaction.guild:
-                await interaction.response.send_message("Только на сервере.", ephemeral=True)
-                return
-            if not can_manage(interaction):
-                await interaction.response.send_message(
-                    "❌ Доступно только владельцу сервера или администратору.", ephemeral=True)
-                return
+        if not interaction.guild:
+            await interaction.response.send_message("Только на сервере.", ephemeral=True)
+            return
+        if not can_manage(interaction):
+            await interaction.response.send_message(
+                "❌ Доступно только владельцу сервера или администратору.", ephemeral=True)
+            return
 
-            embed = discord.Embed(
-                title="🛡 Панель администратора",
-                description=_main_desc(),
-                color=0xE74C3C,
-            )
-            embed.set_footer(text=f"Запросил: {interaction.user.display_name}")
-            await _safe_send(interaction, embed=embed,
-                             view=AdminMainView(interaction.user.id, interaction.guild.id))
-        except discord.NotFound:
-            return  # interaction просрочен (ответ >3 сек.) — не баг логики
+        embed = discord.Embed(
+            title="🛡 Панель администратора",
+            description=_main_desc(),
+            color=0xE74C3C,
+        )
+        embed.set_footer(text=f"Запросил: {interaction.user.display_name}")
+        await _safe_send(interaction, embed=embed,
+                         view=AdminMainView(interaction.user.id, interaction.guild.id))
+
+
+# ===== Автообёртка всех UI-коллбэков модуля =====
+# make_resilient перехватывает исключения и учитывает оба стиля вызова
+# коллбэков (official / форк хостинга). Применяем ко ВСЕМ методам callback
+# классов View/Item этого модуля — кнопки защищены без ручного декора каждой.
+for _cls in list(globals().values()):
+    try:
+        if isinstance(_cls, type) and issubclass(_cls, discord.ui.View):
+            pass
+        elif isinstance(_cls, type) and issubclass(_cls, discord.ui.Item):
+            pass
+        else:
+            continue
+    except TypeError:
+        continue
+    for _name, _attr in list(vars(_cls).items()):
+        if _name == "callback" and callable(_attr):
+            setattr(_cls, _name, make_resilient(_attr))

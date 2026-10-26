@@ -158,19 +158,220 @@ async def deliver_message(
     embed: discord.Embed = None,
     view=None
 ):
+    """Доставка/обновление ответа без падения на протухшем interaction.
+
+    - если interaction ещё не отвечен -> edit_message (если message есть)
+      иначе send_message ephemeral;
+    - если отвечен и есть сообщение -> редактируем его;
+    - при 404 Unknown interaction / прочем HTTPException -> followup.
+    """
+    kwargs = {"content": content, "embed": embed}
+    if view is not None or kwargs["content"] is not None or kwargs["embed"] is not None:
+        kwargs["view"] = view
+
     try:
         if interaction.response.is_done():
             if interaction.message is not None:
-                await interaction.message.edit(content=content, embed=embed, view=view)
+                await interaction.edit_original_response(**kwargs)
             else:
-                await interaction.edit_original_response(content=content, embed=embed, view=view)
+                await interaction.followup.send(**kwargs, ephemeral=True)
+        elif interaction.message is not None:
+            await interaction.response.edit_message(**kwargs)
         else:
-            await interaction.response.edit_message(content=content, embed=embed, view=view)
+            await interaction.response.send_message(**kwargs, ephemeral=True)
     except discord.HTTPException:
         try:
-            await interaction.edit_original_response(content=content, embed=embed, view=view)
+            await interaction.followup.send(**kwargs, ephemeral=True)
         except Exception:
             pass
+
+
+# ===== Глобальный щит «неубиваемости» =====
+
+def _is_ui_item(obj) -> bool:
+    try:
+        return isinstance(obj, discord.ui.Item)
+    except Exception:
+        return False
+
+
+def make_resilient(fn):
+    """Универсальная обёртка для ЛЮБЫХ хэндлеров (slash-команды, кнопки,
+    селекты, модалки).
+
+    Гарантии:
+    1. Совместимость сигнатур: хэндлер получает корректные
+       (interaction[, item]) независимо от того, как его вызвала конкретная
+       сборка discord.py (official вызывает callback(interaction), форки —
+       callback(interaction, item)); self/parent подставляется автоматически.
+    2. Ни одно необработанное исключение не улетает в Discord: оно логируется
+       с полным трейсбеком, а пользователю показывается дружелюбный ответ.
+    3. Ошибки доставки (404 Unknown interaction) проглатываются молча —
+       interaction уже мёртв, делать нечего.
+    """
+    import functools
+
+    params = None
+    try:
+        params = [p for p in inspect.signature(fn).parameters.values()
+                  if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    except (TypeError, ValueError):
+        pass
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        # --- нормализация аргументов под сигнатуру fn ---
+        call_args = args
+        if params is not None:
+            n = len(params)
+            has_self = getattr(fn, "__self__", None) is not None
+            needs_item = any(p.name != "interaction" and p.default is inspect.Parameter.empty
+                             for p in (params[1:] if has_self else params))
+            inter = next((a for a in args if isinstance(a, discord.Interaction)), None)
+            item = next((a for a in args if _is_ui_item(a)), None)
+            if inter is not None:
+                rebuilt = []
+                if not has_self and n >= 2:
+                    # несвязанная функция из View: первый параметр self
+                    parent = getattr(item, "_view", None) or getattr(item, "_parent", None)
+                    rebuilt.append(parent)
+                rebuilt.append(inter)
+                if needs_item:
+                    rebuilt.append(item)
+                call_args = tuple(rebuilt) + tuple(
+                    a for a in args if a is not inter and not _is_ui_item(a))
+
+        # --- выполнение с перехватом ошибок ---
+        try:
+            return await fn(*call_args, **kwargs)
+        except discord.NotFound:
+            return  # interaction истёк — штатная ситуация
+        except (discord.Forbidden, discord.HTTPException) as e:
+            log.warning("HTTP-ошибка в %s: %s", getattr(fn, "__qualname__", fn), e)
+            try:
+                if not (args and isinstance(args[0], discord.Interaction)):
+                    return
+                inter = next(a for a in args if isinstance(a, discord.Interaction))
+                if not inter.response.is_done():
+                    await inter.response.send_message(
+                        "⚠️ Что-то пошло не так (недостаточно прав или боту не хватает доступа к каналу).",
+                        ephemeral=True)
+            except Exception:
+                pass
+        except Exception:
+            log.exception("Необработанная ошибка в %s", getattr(fn, "__qualname__", fn))
+            try:
+                inter = next((a for a in args if isinstance(a, discord.Interaction)), None)
+                if inter is not None:
+                    msg = "💥 Внутренняя ошибка. Попробуй ещё раз позже — админы уже уведомлены логом."
+                    if not inter.response.is_done():
+                        await inter.response.send_message(msg, ephemeral=True)
+                    else:
+                        await inter.followup.send(msg, ephemeral=True)
+            except Exception:
+                pass
+        return None
+
+    # discord.py проверяет co_flags CO_COROUTINE напрямую — восстанавливаем флаг
+    wrapper.__code__ = wrapper.__code__.replace(co_flags=wrapper.__code__.co_flags | 0x100)
+    wrapper.__annotations__ = getattr(fn, "__annotations__", {})
+    return wrapper
+
+
+# Алиас: прежний safe_command теперь просто часть общего щита
+safe_command = make_resilient
+
+
+def _find_interaction(args):
+    return next((a for a in args if isinstance(a, discord.Interaction)), None)
+
+
+def install_global_handler_guard(logger=None):
+    """Глобальный «неубиваемый» режим для ВСЕХ обработчиков взаимодействий.
+
+    Патчит discord.ui.view.View._dispatch_interactions и
+    discord.app_commands.tree.Tree.on_error (а также Interaction.on_error как
+    запасной путь). Теперь, даже если какой-то хэндлер забыли обернуть в
+    make_resilient или ошибка возникла внутри самой библиотеки до/после
+    хэндлера — бот не роняет трейсбек в void и Discord не видит «бот не
+    отвечает»: пользователь получает ephemeral-сообщение, ошибка пишется в лог.
+
+    Идемпотентно: повторные вызовы не оборачивают повторно.
+    """
+    logr = logger or logging.getLogger("guard")
+
+    # ---------- 1. View: кнопки / селекты / модалки ----------
+    try:
+        from discord.ui import view as _view_mod
+    except Exception:
+        _view_mod = None
+
+    if _view_mod is not None and not getattr(_view_mod.View, "_guard_installed", False):
+        orig_scheduled = _view_mod.View._scheduled_task
+
+        async def guarded_scheduled(self, item, interaction):
+            try:
+                return await orig_scheduled(self, item, interaction)
+            except discord.NotFound:
+                pass
+            except Exception:
+                logr.exception("Guard: необработанная ошибка в view %s", type(self).__name__)
+                try:
+                    msg = "💥 Ошибка интерфейса. Попробуй ещё раз."
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(msg, ephemeral=True)
+                    else:
+                        await interaction.followup.send(msg, ephemeral=True)
+                except Exception:
+                    pass
+
+        _view_mod.View._scheduled_task = guarded_scheduled
+        _view_mod.View._guard_installed = True
+
+    # ---------- 2. app_commands CommandTree: slash-команды ----------
+    try:
+        from discord.app_commands.tree import CommandTree as _Tree, CommandNotFound as _CNF
+    except Exception:
+        _Tree = None
+        _CNF = None
+
+    if _Tree is not None and not getattr(_Tree, "_guard_installed", False):
+        orig_tree_error = _Tree.on_error
+
+        async def on_tree_error(self, interaction, error, /):
+            # стандартное поведение: лог + вызов error-хэндлеров команды
+            try:
+                await orig_tree_error(self, interaction, error)
+            except Exception:
+                logr.exception("Guard: ошибка в стандартном on_error")
+
+            if _CNF is not None and isinstance(error, _CNF):
+                return
+            msg = "💥 Команда выполнилась с ошибкой. Попробуй ещё раз позже."
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(msg, ephemeral=True)
+                else:
+                    await interaction.followup.send(msg, ephemeral=True)
+            except Exception:
+                pass
+
+        _Tree.on_error = on_tree_error
+        _Tree._guard_installed = True
+
+    # ---------- 3. Fallback: Interaction-level errors ----------
+    try:
+        if not getattr(discord.Interaction, "_guard_installed", False):
+
+            async def on_interaction_error(self, error):
+                logr.warning("Guard: interaction error: %s", error)
+
+            discord.Interaction.on_error = on_interaction_error
+            discord.Interaction._guard_installed = True
+    except Exception:
+        pass
+
+    return True
 
 
 async def safe_remove_role(guild: discord.Guild, user_id: int, role_id: int):

@@ -14,6 +14,7 @@
 import time
 
 import discord
+from .shared import make_resilient
 from discord import app_commands, ui
 
 from database import db, EFFECTS
@@ -66,16 +67,36 @@ UPGRADE_INFO = {
 
 
 def rarity_weight(item) -> int:
-    """Устойчиво к строкам sqlite3.Row и просто строкам-редкостям."""
+    """Устойчиво к dict / sqlite3.Row / строке-редкости / объектам с атрибутом rarity.
+
+    Никогда не бросает исключение — возвращает 0 для неизвестного значения.
+    """
+    if item is None:
+        return 0
     if isinstance(item, str):
         return RARITY_ORDER.get(item, 0)
+    rarity = None
+    # dict / sqlite3.Row
     try:
         rarity = item["rarity"]
     except (KeyError, IndexError, TypeError):
         rarity = None
-    if not rarity:
-        rarity = getattr(item, "get", lambda *_: "common")("rarity", "common")
+    if rarity is None:
+        rarity = getattr(item, "rarity", None)
+    if not isinstance(rarity, str):
+        rarity = "common"
     return RARITY_ORDER.get(rarity, 0)
+
+
+def safe_rarity(item) -> str:
+    """Строковое значение редкости предмета инвентаря без риска падения."""
+    if isinstance(item, str):
+        return item
+    try:
+        r = item["rarity"]
+    except (KeyError, IndexError, TypeError):
+        r = getattr(item, "rarity", None)
+    return r if isinstance(r, str) and r else "common"
 
 
 def _item_get(item: dict, key: str, default=0):
@@ -400,11 +421,11 @@ class InventoryV2View(ui.View):
             base = list(data["roles"])
 
             if self.rarity_filter != "all":
-                base = [i for i in base if i["rarity"] == self.rarity_filter]
+                base = [i for i in base if safe_rarity(i) == self.rarity_filter]
 
             base = sort_items(base, self.sort)
             available_rarities = sorted(
-                {i["rarity"] for i in data["roles"]},
+                {safe_rarity(i) for i in data["roles"]},
                 key=rarity_weight,
                 reverse=True
             )
@@ -412,7 +433,7 @@ class InventoryV2View(ui.View):
             base = data["cases"]
             available_rarities = []
         elif self.tab == TAB_UPGRADES:
-            base = sorted(data["upgrades"], key=rarity_weight)
+            base = sorted(data["upgrades"], key=lambda i: rarity_weight(safe_rarity(i)))
             available_rarities = []
         else:
             base = sorted(data["effects"], key=lambda x: x["id"])
@@ -726,3 +747,18 @@ def register(bot):
 
         view = InventoryV2View(interaction.user.id, interaction.guild.id)
         await view.refresh(interaction)
+
+
+    # --- Автозащита всех UI-коллбэков модуля (кнопки/селекты/модалки) ---
+    # make_resilient перехватывает любые исключения (в т.ч. 404 Unknown
+    # interaction) и подстраивает сигнатуру под стиль вызова библиотеки.
+    for _cls in list(globals().values()):
+        try:
+            if not (isinstance(_cls, type) and (
+                    issubclass(_cls, discord.ui.View) or issubclass(_cls, discord.ui.Item))):
+                continue
+        except TypeError:
+            continue
+        for _name, _attr in list(vars(_cls).items()):
+            if _name == "callback" and callable(_attr) and not getattr(_attr, "_wrapped_by_guard", False):
+                setattr(_cls, _name, make_resilient(_attr))

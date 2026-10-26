@@ -16,7 +16,7 @@ import discord
 from discord import ui
 
 from database import db
-from .shared import check_cooldown, get_rarity_name, safe_command
+from .shared import check_cooldown, get_rarity_name, safe_command, make_resilient
 from .persistent_utils import make_id, edit_view
 
 WHEEL_COOLDOWN = 3600  # 1 час
@@ -274,3 +274,18 @@ def register(bot):
         embed.add_field(name="Шансы выпадения", value=_rewards_text(), inline=False)
         embed.set_footer(text="Валюты не конвертируются. Pity: после 10 пустых — редкий ключ.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+    # --- Автозащита всех UI-коллбэков модуля (кнопки/селекты/модалки) ---
+    # make_resilient перехватывает любые исключения (в т.ч. 404 Unknown
+    # interaction) и подстраивает сигнатуру под стиль вызова библиотеки.
+    for _cls in list(globals().values()):
+        try:
+            if not (isinstance(_cls, type) and (
+                    issubclass(_cls, discord.ui.View) or issubclass(_cls, discord.ui.Item))):
+                continue
+        except TypeError:
+            continue
+        for _name, _attr in list(vars(_cls).items()):
+            if _name == "callback" and callable(_attr) and not getattr(_attr, "_wrapped_by_guard", False):
+                setattr(_cls, _name, make_resilient(_attr))

@@ -9,6 +9,15 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+# --- Глобальный щит «неубиваемости» -------------------------------------------
+# Патчит View._scheduled_task и Tree.on_error: любая ошибка в кнопке/селекте/
+# команде логируется, а пользователю показывается дружелюбный ephemeral-ответ.
+# Бот больше не падает молча и не оставляет пользователя с «бот не отвечает».
+try:
+    from modules.shared import install_global_handler_guard
+except Exception:  # shared может не импортироваться до настройки БД — ставим заглушку позже
+    install_global_handler_guard = None
+
 # --- Совместимость UI-коллбэков с разными сборками discord.py -----------------
 # Разные сборки по-разному вызывают коллбэк кнопки/селекта:
 #   официальный discord.py : item.callback(interaction), метод (self, inter[, item])
@@ -113,6 +122,31 @@ intents = discord.Intents.default()
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+
+@bot.event
+async def on_ready():
+    log.info("Бот запущен как %s", bot.user)
+
+
+@bot.event
+async def on_error(event, *args, **kwargs):
+    # последняя линия обороны для событийских хэндлеров (on_message и т.п.)
+    log.exception("Необработанная ошибка в событии %s", event)
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    log.warning("Ошибка prefix-команды: %s", error)
+
+
+# Глобальный щит: ставим сразу — до импорта модулей и создания любых View.
+if install_global_handler_guard is not None:
+    install_global_handler_guard(log)
+else:
+    log.warning("install_global_handler_guard не загружен — работает только shим коллбэков")
 
 # Список модулей бота. Если файла нет — предупреждение, бот продолжает запуск.
 MODULES = [

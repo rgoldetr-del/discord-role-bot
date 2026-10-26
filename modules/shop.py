@@ -18,7 +18,7 @@ from discord import ui
 from database import db, EFFECTS
 
 from .persistent_utils import make_id
-from .shared import get_rarity_emoji, get_rarity_name, safe_command
+from .shared import get_rarity_emoji, get_rarity_name, safe_command, make_resilient
 
 # защита от быстрых повторных кликов «Купить» (anti double-spend)
 _pay_locks: dict[tuple, float] = {}
@@ -704,3 +704,18 @@ def register(bot):
         await interaction.response.defer(ephemeral=True)
         view = ShopView(interaction.user.id, interaction.guild.id)
         await view.refresh(interaction)
+
+
+    # --- Автозащита всех UI-коллбэков модуля (кнопки/селекты/модалки) ---
+    # make_resilient перехватывает любые исключения (в т.ч. 404 Unknown
+    # interaction) и подстраивает сигнатуру под стиль вызова библиотеки.
+    for _cls in list(globals().values()):
+        try:
+            if not (isinstance(_cls, type) and (
+                    issubclass(_cls, discord.ui.View) or issubclass(_cls, discord.ui.Item))):
+                continue
+        except TypeError:
+            continue
+        for _name, _attr in list(vars(_cls).items()):
+            if _name == "callback" and callable(_attr) and not getattr(_attr, "_wrapped_by_guard", False):
+                setattr(_cls, _name, make_resilient(_attr))

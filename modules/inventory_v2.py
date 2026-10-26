@@ -65,19 +65,37 @@ UPGRADE_INFO = {
 }
 
 
-def rarity_weight(item: dict) -> int:
-    return RARITY_ORDER.get(item.get("rarity", "common"), 0)
+def rarity_weight(item) -> int:
+    """Устойчиво к строкам sqlite3.Row и просто строкам-редкостям."""
+    if isinstance(item, str):
+        return RARITY_ORDER.get(item, 0)
+    try:
+        rarity = item["rarity"]
+    except (KeyError, IndexError, TypeError):
+        rarity = None
+    if not rarity:
+        rarity = getattr(item, "get", lambda *_: "common")("rarity", "common")
+    return RARITY_ORDER.get(rarity, 0)
+
+
+def _item_get(item: dict, key: str, default=0):
+    """Безопасный доступ к полю словаря/строки БД."""
+    try:
+        val = item[key]
+    except (KeyError, IndexError, TypeError):
+        val = default
+    return val if val is not None else default
 
 
 def sort_items(items: list, sort_key: str) -> list:
     if sort_key == "new":
-        return sorted(items, key=lambda x: (-(x.get("obtained_at") or 0), -(x.get("id") or 0)))
+        return sorted(items, key=lambda x: (-(_item_get(x, "obtained_at") or 0), -(_item_get(x, "id") or 0)))
 
     if sort_key == "price":
-        return sorted(items, key=lambda x: (-(x.get("market_price") or 0), rarity_weight(x)))
+        return sorted(items, key=lambda x: (-(_item_get(x, "market_price") or 0), rarity_weight(x)))
 
     # по умолчанию — по редкости (сначала самые редкие)
-    return sorted(items, key=lambda x: (-rarity_weight(x), -(x.get("market_price") or 0)))
+    return sorted(items, key=lambda x: (-rarity_weight(x), -(_item_get(x, "market_price") or 0)))
 
 
 def item_title(guild: discord.Guild, item: dict) -> str:

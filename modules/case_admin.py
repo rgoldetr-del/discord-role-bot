@@ -239,6 +239,10 @@ async def _install_presets_safe(interaction: discord.Interaction):
         for r in preset.get("rarities", []):
             rr = dict(r)
             rr["roles"] = list(r.get("roles", []))
+            if "coins" in r or "crystals" in r:
+                # Кристальный кейс: награда — валюта, роли не нужны.
+                rr["reward_coins"] = int(r.get("coins", 0) or 0)
+                rr["reward_crystals"] = int(r.get("crystals", 0) or 0)
             rarities.append(rr)
 
         total_chance = sum(int(rr.get("chance", 0)) for rr in rarities)
@@ -247,6 +251,11 @@ async def _install_presets_safe(interaction: discord.Interaction):
                 if rr.get("rarity") == "common":
                     rr["chance"] = max(0, int(rr.get("chance", 0)) + (100 - total_chance))
                     break
+            else:
+                # нет common (кристальные кейсы) — доводим до 100 на первой редкости
+                diff = 100 - sum(int(rr.get("chance", 0)) for rr in rarities)
+                if rarities:
+                    rarities[0]["chance"] = max(0, int(rarities[0].get("chance", 0)) + diff)
 
         case_id = await db.create_case_return_id(
             guild.id,
@@ -267,7 +276,9 @@ async def _install_presets_safe(interaction: discord.Interaction):
                 case_id,
                 rr.get("rarity", "common"),
                 int(rr.get("chance", 0)),
-                int(rr.get("price", 0))
+                int(rr.get("price", 0)),
+                reward_coins=rr.get("reward_coins"),
+                reward_crystals=rr.get("reward_crystals")
             )
 
             for role_name in rr.get("roles", []):
@@ -962,6 +973,10 @@ async def _install_presets_background(interaction: discord.Interaction):
             for r in preset.get("rarities", []):
                 rr = dict(r)
                 rr["roles"] = list(r.get("roles", []))
+                if "coins" in r or "crystals" in r:
+                    # Кристальный кейс: награда — валюта, роли не нужны.
+                    rr["reward_coins"] = int(r.get("coins", 0) or 0)
+                    rr["reward_crystals"] = int(r.get("crystals", 0) or 0)
                 rarities.append(rr)
 
             total_chance = sum(int(rr.get("chance", 0)) for rr in rarities)
@@ -973,6 +988,11 @@ async def _install_presets_background(interaction: discord.Interaction):
                             int(rr.get("chance", 0)) + (100 - total_chance)
                         )
                         break
+                else:
+                    # нет common (кристальные кейсы) — доводим до 100 на первой редкости
+                    diff = 100 - sum(int(rr.get("chance", 0)) for rr in rarities)
+                    if rarities:
+                        rarities[0]["chance"] = max(0, int(rarities[0].get("chance", 0)) + diff)
 
             await progress(f"⏳ {index}/{total_presets} • создаю кейс {name}")
 
@@ -999,7 +1019,9 @@ async def _install_presets_background(interaction: discord.Interaction):
                     case_id,
                     rr.get("rarity", "common"),
                     int(rr.get("chance", 0)),
-                    int(rr.get("price", 0))
+                    int(rr.get("price", 0)),
+                    reward_coins=rr.get("reward_coins"),
+                    reward_crystals=rr.get("reward_crystals")
                 )
 
                 for role_name in rr.get("roles", []):
@@ -1180,6 +1202,10 @@ class CaseAdminListView(ui.View):
             for r in preset["rarities"]:
                 rr = dict(r)
                 rr["roles"] = list(r.get("roles", []))
+                if "coins" in r or "crystals" in r:
+                    # Кристальный кейс: награда — валюта, роли не нужны.
+                    rr["reward_coins"] = int(r.get("coins", 0) or 0)
+                    rr["reward_crystals"] = int(r.get("crystals", 0) or 0)
                 rarities.append(rr)
             total_chance = sum(int(r.get("chance", 0)) for r in rarities)
             if total_chance != 100:
@@ -1187,11 +1213,17 @@ class CaseAdminListView(ui.View):
                     if r["rarity"] == "common":
                         r["chance"] = int(r.get("chance", 0)) + (100 - total_chance)
                         break
+                else:
+                    diff = 100 - sum(int(r.get("chance", 0)) for r in rarities)
+                    if rarities:
+                        rarities[0]["chance"] = max(0, int(rarities[0].get("chance", 0)) + diff)
 
             # 1) создаём кейс и проверяем, что он реально создан
             case_id = await db.create_case_return_id(
                 guild.id, name, preset["case_rarity"],
                 preset["case_price"], preset["key_price"],
+                case_crystal_price=int(preset.get("case_crystal_price", 0)),
+                key_crystal_price=int(preset.get("key_crystal_price", 0)),
                 is_free=1 if preset.get("free") else 0,
                 active=False,
             )
@@ -1204,7 +1236,9 @@ class CaseAdminListView(ui.View):
             for rarity in rarities:
                 # 2) создаём редкость и проверяем
                 rarity_id = await db.add_rarity_return_id(
-                    case_id, rarity["rarity"], int(rarity["chance"]), int(rarity["price"])
+                    case_id, rarity["rarity"], int(rarity["chance"]), int(rarity["price"]),
+                    reward_coins=rarity.get("reward_coins"),
+                    reward_crystals=rarity.get("reward_crystals"),
                 )
                 rarity_check = await db.get_case_rarity_details(rarity_id) if rarity_id else None
                 if not rarity_id or not rarity_check:

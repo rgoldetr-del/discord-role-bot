@@ -1,247 +1,321 @@
 # modules/presets_data.py
-# Пресеты кейсов в тематике Terraria.
-# Старый нетематический пресет заменён.
-# Первый кейс бесплатный (free=True): выдаётся раз в час через магазин.
+# Пресеты кейсов в тематике Terraria: 25 кейсов, от дешёвых к дорогим.
+# Первый кейс [1] 🌱 Greenery — бесплатный (free=True): выдаётся раз в час через /shop.
+# Шансы всегда: common > uncommon > rare > epic > legendary > secret > secret+
 
 PRESET_CASES = [
-    # ============================================================
-    # 1. СТАРТОВЫЙ / БЕСПЛАТНЫЙ КЕЙС
-    # ============================================================
+    # ---------- Набор 1: common (стартовые) ----------
     {
-        "name": "🌱 Стартовый кейс",
+        "name": "[1] 🌱 Greenery",
         "case_rarity": "common",
         "case_price": 0,
         "key_price": 0,
         "free": True,
         "rarities": [
-            {"rarity": "common", "chance": 60, "price": 30, "roles": ["🪓 Медный топор"]},
-            {"rarity": "uncommon", "chance": 25, "price": 100, "roles": ["🧪 Малое зелье здоровья"]},
-            {"rarity": "rare", "chance": 12, "price": 300, "roles": ["⚔️ Деревянный меч"]},
-            {"rarity": "epic", "chance": 3, "price": 1000, "roles": ["🐶 Посох зяблка"]},
+            {"rarity": "common", "chance": 60, "price": 20, "roles": ["🌱 Спринт"]},
+            {"rarity": "uncommon", "chance": 28, "price": 50, "roles": ["🌿 Травник"]},
+            {"rarity": "rare", "chance": 10, "price": 120, "roles": ["🌳 Древолюб"]},
+            {"rarity": "epic", "chance": 2, "price": 400, "roles": ["🍄 Грибник"]},
         ]
     },
-
-    # ============================================================
-    # 2. БОССЫ
-    # ============================================================
     {
-        "name": "👑 Король Слизней",
+        "name": "[1] ⛏️ Copper Miner",
         "case_rarity": "common",
-        "case_price": 250,
-        "key_price": 100,
+        "case_price": 150,
+        "key_price": 60,
         "rarities": [
-            {"rarity": "common", "chance": 55, "price": 50, "roles": ["🟦 Слизистая верёвка"]},
-            {"rarity": "uncommon", "chance": 28, "price": 150, "roles": ["🪝 Крюк-слизень"]},
-            {"rarity": "rare", "chance": 13, "price": 600, "roles": ["🥷 Костюм ниндзя"]},
-            {"rarity": "epic", "chance": 4, "price": 2500, "roles": ["👑 Маска Короля Слизней"]},
+            {"rarity": "common", "chance": 55, "price": 40, "roles": ["⛏️ Медная кирка"]},
+            {"rarity": "uncommon", "chance": 30, "price": 90, "roles": ["🟤 Медный шлем"]},
+            {"rarity": "rare", "chance": 13, "price": 250, "roles": ["🪨 Медная кольчуга"]},
+            {"rarity": "epic", "chance": 2, "price": 700, "roles": ["💧 Пещерный фонарь"]},
         ]
     },
     {
-        "name": "👁️ Глаз Ктулху",
+        "name": "[1] 🌲 Living Wood",
         "case_rarity": "common",
-        "case_price": 450,
-        "key_price": 180,
+        "case_price": 200,
+        "key_price": 80,
         "rarities": [
-            {"rarity": "common", "chance": 50, "price": 70, "roles": ["🔍 Линза"]},
-            {"rarity": "uncommon", "chance": 30, "price": 200, "roles": ["🔭 Бинокль"]},
-            {"rarity": "rare", "chance": 15, "price": 800, "roles": ["🩸 Маска Глаза Ктулху"]},
-            {"rarity": "epic", "chance": 5, "price": 3000, "roles": ["👁️ Подозрительный глаз"]},
+            {"rarity": "common", "chance": 50, "price": 50, "roles": ["🪵 Живая древесина"]},
+            {"rarity": "uncommon", "chance": 32, "price": 120, "roles": ["🌰 Жёлудь"]},
+            {"rarity": "rare", "chance": 15, "price": 300, "roles": ["🐿️ Белка"]},
+            {"rarity": "epic", "chance": 3, "price": 900, "roles": ["🦉 Сова"]},
         ]
     },
     {
-        "name": "🐛 Пожиратель миров",
+        "name": "[1] ☁️ Sky Island",
         "case_rarity": "uncommon",
-        "case_price": 700,
-        "key_price": 280,
+        "case_price": 300,
+        "key_price": 120,
         "rarities": [
-            {"rarity": "common", "chance": 45, "price": 100, "roles": ["🪱 Сегмент червя"]},
-            {"rarity": "uncommon", "chance": 30, "price": 350, "roles": ["🧣 Шарф червя"]},
-            {"rarity": "rare", "chance": 18, "price": 1200, "roles": ["🌑 Теневая чешуя"]},
-            {"rarity": "epic", "chance": 7, "price": 4500, "roles": ["🪓 Демонитовый топор"]},
+            {"rarity": "common", "chance": 45, "price": 70, "roles": ["☁️ Облако"]},
+            {"rarity": "uncommon", "chance": 35, "price": 160, "roles": ["🌈 Радужный кирпич"]},
+            {"rarity": "rare", "chance": 17, "price": 420, "roles": ["🪽 Крылья ангела"]},
+            {"rarity": "epic", "chance": 3, "price": 1200, "roles": ["⚡ Звёздная ярость"]},
         ]
     },
     {
-        "name": "💀 Скелетрон",
-        "case_rarity": "rare",
-        "case_price": 1200,
-        "key_price": 450,
-        "rarities": [
-            {"rarity": "common", "chance": 40, "price": 150, "roles": ["🦴 Старая кость"]},
-            {"rarity": "uncommon", "chance": 30, "price": 500, "roles": ["📖 Книга черепов"]},
-            {"rarity": "rare", "chance": 20, "price": 1800, "roles": ["🖐️ Рука Скелетрона"]},
-            {"rarity": "epic", "chance": 10, "price": 7000, "roles": ["💀 Маска Скелетрона"]},
-        ]
-    },
-    {
-        "name": "🧱 Стена Плоти",
-        "case_rarity": "rare",
-        "case_price": 2200,
-        "key_price": 800,
-        "rarities": [
-            {"rarity": "common", "chance": 35, "price": 300, "roles": ["🍖 Плоть"]},
-            {"rarity": "uncommon", "chance": 30, "price": 900, "roles": ["🎯 Эмблема воина"]},
-            {"rarity": "rare", "chance": 25, "price": 3500, "roles": ["🔫 Лазерная винтовка"]},
-            {"rarity": "epic", "chance": 9, "price": 12000, "roles": ["🗡️ Разбиватель"]},
-            {"rarity": "legendary", "chance": 1, "price": 60000, "roles": ["🧱 Душа Хардмода"]},
-        ]
-    },
-    {
-        "name": "🌸 Плантера",
-        "case_rarity": "epic",
-        "case_price": 5000,
-        "key_price": 1800,
-        "rarities": [
-            {"rarity": "uncommon", "chance": 35, "price": 1000, "roles": ["🌿 Семя Плантеры"]},
-            {"rarity": "rare", "chance": 35, "price": 4000, "roles": ["🌺 Маска Плантеры"]},
-            {"rarity": "epic", "chance": 22, "price": 15000, "roles": ["🪄 Цветок Плантеры"]},
-            {"rarity": "legendary", "chance": 7, "price": 70000, "roles": ["🎸 Гроза джунглей"]},
-            {"rarity": "secret", "chance": 1, "price": 300000, "roles": ["🌳 Сердце джунглей"]},
-        ]
-    },
-    {
-        "name": "🌙 Лунный Лорд",
-        "case_rarity": "secret+",
-        "case_price": 60000,
-        "key_price": 20000,
-        "rarities": [
-            {"rarity": "rare", "chance": 30, "price": 5000, "roles": ["🌑 Лунный фрагмент"]},
-            {"rarity": "epic", "chance": 35, "price": 20000, "roles": ["🎭 Маска Лунного Лорда"]},
-            {"rarity": "legendary", "chance": 25, "price": 100000, "roles": ["🪐 Печать Луны"]},
-            {"rarity": "secret", "chance": 8, "price": 500000, "roles": ["🐙 Щупальце Владыки"]},
-            {"rarity": "secret+", "chance": 2, "price": 2000000, "roles": ["🌈 Последняя Призма"]},
-        ]
-    },
-
-    # ============================================================
-    # 3. ПРОФЕССИИ / БЫТ
-    # ============================================================
-    {
-        "name": "⛏️ Шахтёр",
-        "case_rarity": "common",
+        "name": "[1] 🎃 Pumpkin Moon",
+        "case_rarity": "uncommon",
         "case_price": 400,
         "key_price": 150,
         "rarities": [
-            {"rarity": "common", "chance": 50, "price": 60, "roles": ["⛏️ Медная кирка"]},
-            {"rarity": "uncommon", "chance": 30, "price": 250, "roles": ["🕯️ Шахтёрский фонарь"]},
-            {"rarity": "rare", "chance": 15, "price": 1000, "roles": ["🧨 Динамит"]},
-            {"rarity": "epic", "chance": 4, "price": 5000, "roles": ["⚙️ Кобальтовый бур"]},
-            {"rarity": "legendary", "chance": 1, "price": 50000, "roles": ["🚜 Лазерная дрель"]},
+            {"rarity": "common", "chance": 42, "price": 90, "roles": ["🎃 Тыква"]},
+            {"rarity": "uncommon", "chance": 36, "price": 200, "roles": ["👻 Призрак"]},
+            {"rarity": "rare", "chance": 18, "price": 500, "roles": ["🟩 Слизень"]},
+            {"rarity": "epic", "chance": 4, "price": 1500, "roles": ["🌕 Оборотень"]},
+        ]
+    },
+
+    # ---------- Набор 2: uncommon/rare ----------
+    {
+        "name": "[2] ❄️ Frost Legion",
+        "case_rarity": "uncommon",
+        "case_price": 600,
+        "key_price": 250,
+        "rarities": [
+            {"rarity": "common", "chance": 40, "price": 150, "roles": ["❄️ Снежок"]},
+            {"rarity": "uncommon", "chance": 35, "price": 320, "roles": ["🧊 Ледяной блок"]},
+            {"rarity": "rare", "chance": 20, "price": 800, "roles": ["⛄ Снеговик"]},
+            {"rarity": "epic", "chance": 5, "price": 2200, "roles": ["🥶 Ледяной лук"]},
         ]
     },
     {
-        "name": "🎣 Рыбак",
+        "name": "[2] 🔥 Inferno Prepper",
         "case_rarity": "uncommon",
-        "case_price": 800,
+        "case_price": 750,
         "key_price": 300,
         "rarities": [
-            {"rarity": "common", "chance": 45, "price": 100, "roles": ["🎣 Деревянная удочка"]},
-            {"rarity": "uncommon", "chance": 30, "price": 400, "roles": ["🪱 Золотой червь"]},
-            {"rarity": "rare", "chance": 18, "price": 1500, "roles": ["📱 Телефон рыбака"]},
-            {"rarity": "epic", "chance": 6, "price": 6000, "roles": ["🐷 Свинотрон"]},
-            {"rarity": "legendary", "chance": 1, "price": 80000, "roles": ["🌊 Бездонное ведро лавы"]},
+            {"rarity": "common", "chance": 40, "price": 180, "roles": ["🔥 Адский камень"]},
+            {"rarity": "uncommon", "chance": 34, "price": 400, "roles": ["🌋 Обсидиан"]},
+            {"rarity": "rare", "chance": 20, "price": 1000, "roles": ["☄️ Метеорит"]},
+            {"rarity": "epic", "chance": 6, "price": 2800, "roles": ["🔥 Огненные перчатки"]},
         ]
     },
     {
-        "name": "🧪 Зельевар",
+        "name": "[2] 🧪 Alchemist",
         "case_rarity": "rare",
-        "case_price": 1500,
-        "key_price": 550,
+        "case_price": 900,
+        "key_price": 350,
         "rarities": [
-            {"rarity": "common", "chance": 40, "price": 200, "roles": ["🍶 Пустая бутылка"]},
-            {"rarity": "uncommon", "chance": 30, "price": 700, "roles": ["❤️ Зелье регенерации"]},
-            {"rarity": "rare", "chance": 20, "price": 2500, "roles": ["💙 Зелье маны"]},
-            {"rarity": "epic", "chance": 9, "price": 9000, "roles": ["💖 Эликсир жизни"]},
-            {"rarity": "legendary", "chance": 1, "price": 90000, "roles": ["🪨 Философский камень"]},
+            {"rarity": "common", "chance": 35, "price": 200, "roles": ["🧪 Зелье лечения"]},
+            {"rarity": "uncommon", "chance": 35, "price": 450, "roles": ["⚗️ Зелье маны"]},
+            {"rarity": "rare", "chance": 22, "price": 1200, "roles": ["🟣 Зелье регенерации"]},
+            {"rarity": "epic", "chance": 8, "price": 3200, "roles": ["✨ Зелье невидимости"]},
+        ]
+    },
+    {
+        "name": "[2] 🧟 Undead Army",
+        "case_rarity": "rare",
+        "case_price": 1100,
+        "key_price": 420,
+        "rarities": [
+            {"rarity": "common", "chance": 35, "price": 250, "roles": ["🧟 Зомби"]},
+            {"rarity": "uncommon", "chance": 34, "price": 550, "roles": ["💀 Скелет"]},
+            {"rarity": "rare", "chance": 22, "price": 1400, "roles": ["🩸 Вампир"]},
+            {"rarity": "epic", "chance": 9, "price": 4000, "roles": ["🧟 Франкенштейн"]},
+        ]
+    },
+    {
+        "name": "[2] 🌸 Hallow Guardian",
+        "case_rarity": "rare",
+        "case_price": 1300,
+        "key_price": 500,
+        "rarities": [
+            {"rarity": "common", "chance": 32, "price": 300, "roles": ["🌸 Единорог"]},
+            {"rarity": "uncommon", "chance": 34, "price": 650, "roles": ["🦄 Пикси"]},
+            {"rarity": "rare", "chance": 24, "price": 1600, "roles": ["🔔 Светящийся меч"]},
+            {"rarity": "epic", "chance": 10, "price": 4500, "roles": ["👼 Фея"]},
         ]
     },
 
-    # ============================================================
-    # 4. ПИТОМЦЫ И МАУНТЫ
-    # ============================================================
+    # ---------- Набор 3: rare/epic ----------
     {
-        "name": "🐾 Верные питомцы",
+        "name": "[3] 👑 Royal Guard",
         "case_rarity": "rare",
+        "case_price": 1800,
+        "key_price": 700,
+        "rarities": [
+            {"rarity": "common", "chance": 30, "price": 400, "roles": ["🏹 Стражник"]},
+            {"rarity": "uncommon", "chance": 32, "price": 900, "roles": ["🛡️ Рыцарский щит"]},
+            {"rarity": "rare", "chance": 26, "price": 2200, "roles": ["⚔️ Экскалибур"]},
+            {"rarity": "epic", "chance": 12, "price": 6000, "roles": ["👑 Корона"]},
+        ]
+    },
+    {
+        "name": "[3] 🌊 Dungeon Deep",
+        "case_rarity": "epic",
+        "case_price": 2400,
+        "key_price": 950,
+        "rarities": [
+            {"rarity": "uncommon", "chance": 35, "price": 800, "roles": ["🟦 Кобальтовый шлем"]},
+            {"rarity": "rare", "chance": 35, "price": 2400, "roles": ["🗝️ Золотой ключ"]},
+            {"rarity": "epic", "chance": 22, "price": 7000, "roles": ["💙 Синий меч"]},
+            {"rarity": "legendary", "chance": 8, "price": 20000, "roles": ["🐉 Дракон подземелья"]},
+        ]
+    },
+    {
+        "name": "[3] 🕷️ Spider Nest",
+        "case_rarity": "epic",
         "case_price": 3000,
-        "key_price": 1100,
+        "key_price": 1200,
         "rarities": [
-            {"rarity": "common", "chance": 35, "price": 400, "roles": ["🐱 Котёнок"]},
-            {"rarity": "uncommon", "chance": 30, "price": 1200, "roles": ["🐰 Крольчонок"]},
-            {"rarity": "rare", "chance": 20, "price": 4000, "roles": ["🦖 Динозаврик"]},
-            {"rarity": "epic", "chance": 12, "price": 15000, "roles": ["🧚 Фея в банке"]},
-            {"rarity": "legendary", "chance": 3, "price": 80000, "roles": ["👁️ Глазик Ктулху"]},
+            {"rarity": "uncommon", "chance": 32, "price": 1000, "roles": ["🕷️ Паук"]},
+            {"rarity": "rare", "chance": 34, "price": 2800, "roles": ["🕸️ Паутина"]},
+            {"rarity": "epic", "chance": 24, "price": 8000, "roles": ["👑 Королева пауков"]},
+            {"rarity": "legendary", "chance": 10, "price": 24000, "roles": ["🌑 Тёмный жрец"]},
         ]
     },
     {
-        "name": "🛸 Эпические маунты",
+        "name": "[3] 🌙 Night Owl",
         "case_rarity": "epic",
-        "case_price": 6000,
-        "key_price": 2200,
+        "case_price": 3600,
+        "key_price": 1400,
         "rarities": [
-            {"rarity": "uncommon", "chance": 35, "price": 1500, "roles": ["🐇 Кроличье седло"]},
-            {"rarity": "rare", "chance": 35, "price": 5000, "roles": ["🦄 Седло единорога"]},
-            {"rarity": "epic", "chance": 20, "price": 20000, "roles": ["🐉 Седло Пигрона"]},
-            {"rarity": "legendary", "chance": 9, "price": 100000, "roles": ["🛸 Инопланетный НЛО"]},
-            {"rarity": "secret+", "chance": 1, "price": 1000000, "roles": ["🚜 Буровая установка"]},
+            {"rarity": "rare", "chance": 35, "price": 3200, "roles": ["🌙 Лунный амулет"]},
+            {"rarity": "epic", "chance": 40, "price": 9000, "roles": ["🦉 Ночной дозор"]},
+            {"rarity": "legendary", "chance": 20, "price": 26000, "roles": ["⭐ Звёздная пушка"]},
+            {"rarity": "secret", "chance": 5, "price": 90000, "roles": ["🌌 Пустотный странник"]},
+        ]
+    },
+    {
+        "name": "[3] ⚡ Storm Caller",
+        "case_rarity": "epic",
+        "case_price": 4200,
+        "key_price": 1600,
+        "rarities": [
+            {"rarity": "rare", "chance": 34, "price": 3600, "roles": ["⛈️ Грозовой посох"]},
+            {"rarity": "epic", "chance": 40, "price": 10000, "roles": ["🌩️ Молниеносец"]},
+            {"rarity": "legendary", "chance": 20, "price": 30000, "roles": ["🌪️ Торнадо"]},
+            {"rarity": "secret", "chance": 6, "price": 100000, "roles": ["⚡ Громобой"]},
         ]
     },
 
-    # ============================================================
-    # 5. БИОМЫ И ЛОКАЦИИ
-    # ============================================================
+    # ---------- Набор 4: legendary ----------
     {
-        "name": "🔥 Ад",
-        "case_rarity": "epic",
-        "case_price": 4000,
-        "key_price": 1500,
-        "rarities": [
-            {"rarity": "common", "chance": 35, "price": 600, "roles": ["🔥 Адский камень"]},
-            {"rarity": "uncommon", "chance": 30, "price": 1800, "roles": ["🌋 Огненный цветок"]},
-            {"rarity": "rare", "chance": 22, "price": 7000, "roles": ["🌞 Солнечная ярость"]},
-            {"rarity": "epic", "chance": 10, "price": 25000, "roles": ["🔱 Демоническое копьё"]},
-            {"rarity": "legendary", "chance": 3, "price": 120000, "roles": ["☄️ Адский жнец"]},
-        ]
-    },
-    {
-        "name": "🏰 Данж",
-        "case_rarity": "epic",
-        "case_price": 4500,
-        "key_price": 1700,
-        "rarities": [
-            {"rarity": "common", "chance": 35, "price": 700, "roles": ["🗝️ Золотой ключ"]},
-            {"rarity": "uncommon", "chance": 30, "price": 2000, "roles": ["🛡️ Кобальтовый щит"]},
-            {"rarity": "rare", "chance": 22, "price": 8000, "roles": ["🔫 Ручной пистолет"]},
-            {"rarity": "epic", "chance": 10, "price": 30000, "roles": ["🌀 Акватон"]},
-            {"rarity": "legendary", "chance": 3, "price": 140000, "roles": ["🔨 Молот Паладина"]},
-        ]
-    },
-
-    # ============================================================
-    # 6. СОБЫТИЯ И ЭНДГЕЙМ
-    # ============================================================
-    {
-        "name": "👽 Марсианское безумие",
+        "name": "[4] 🌌 Cosmos Walker",
         "case_rarity": "legendary",
-        "case_price": 12000,
-        "key_price": 4500,
+        "case_price": 6000,
+        "key_price": 2400,
         "rarities": [
-            {"rarity": "rare", "chance": 35, "price": 6000, "roles": ["📡 Марсианский провод"]},
-            {"rarity": "epic", "chance": 35, "price": 25000, "roles": ["🔫 Лазерный пулемёт"]},
-            {"rarity": "legendary", "chance": 25, "price": 120000, "roles": ["🛸 Антигравитационный крюк"]},
-            {"rarity": "secret", "chance": 4, "price": 600000, "roles": ["👽 Ксенопосох"]},
-            {"rarity": "secret+", "chance": 1, "price": 3000000, "roles": ["🌌 Инопланетный скипетр"]},
+            {"rarity": "rare", "chance": 30, "price": 5000, "roles": ["🌠 Метеоритный меч"]},
+            {"rarity": "epic", "chance": 32, "price": 14000, "roles": ["🪐 Планетарный диск"]},
+            {"rarity": "legendary", "chance": 28, "price": 40000, "roles": ["☀️ Солнечный камень"]},
+            {"rarity": "secret", "chance": 10, "price": 150000, "roles": ["🌌 Млечный путь"]},
         ]
     },
     {
-        "name": "⚔️ Зенит",
-        "case_rarity": "secret+",
-        "case_price": 80000,
-        "key_price": 30000,
+        "name": "[4] 🐉 Dragon Cult",
+        "case_rarity": "legendary",
+        "case_price": 7500,
+        "key_price": 3000,
         "rarities": [
-            {"rarity": "legendary", "chance": 45, "price": 100000, "roles": ["🗡️ Терра-клинок"]},
-            {"rarity": "secret", "chance": 40, "price": 400000, "roles": ["🐱 Мяумур"]},
-            {"rarity": "secret+", "chance": 15, "price": 2500000, "roles": ["⚔️ Зенит"]},
+            {"rarity": "epic", "chance": 35, "price": 16000, "roles": ["🐲 Дракончик"]},
+            {"rarity": "legendary", "chance": 40, "price": 45000, "roles": ["🐉 Древний дракон"]},
+            {"rarity": "secret", "chance": 20, "price": 180000, "roles": ["🔥 Огненный дракон"]},
+            {"rarity": "secret+", "chance": 5, "price": 900000, "roles": ["🐉 Владыка драконов"]},
+        ]
+    },
+    {
+        "name": "[4] ⚙️ Mechanist",
+        "case_rarity": "legendary",
+        "case_price": 9000,
+        "key_price": 3600,
+        "rarities": [
+            {"rarity": "epic", "chance": 35, "price": 18000, "roles": ["⚙️ Шестерёнка"]},
+            {"rarity": "legendary", "chance": 40, "price": 50000, "roles": ["🤖 Механический бур"]},
+            {"rarity": "secret", "chance": 20, "price": 200000, "roles": ["🛸 НЛО"]},
+            {"rarity": "secret+", "chance": 5, "price": 1000000, "roles": ["🦾 Кибертитан"]},
+        ]
+    },
+    {
+        "name": "[4] 💀 Skeletron Prime",
+        "case_rarity": "legendary",
+        "case_price": 11000,
+        "key_price": 4400,
+        "rarities": [
+            {"rarity": "epic", "chance": 30, "price": 20000, "roles": ["💀 Череп"]},
+            {"rarity": "legendary", "chance": 42, "price": 60000, "roles": ["🦴 Скелетрон"]},
+            {"rarity": "secret", "chance": 22, "price": 240000, "roles": ["⚙️ Скелетрон Прайм"]},
+            {"rarity": "secret+", "chance": 6, "price": 1200000, "roles": ["☠️ Владыка костей"]},
+        ]
+    },
+    {
+        "name": "[4] 🌿 Plantera Bloom",
+        "case_rarity": "legendary",
+        "case_price": 13000,
+        "key_price": 5200,
+        "rarities": [
+            {"rarity": "legendary", "chance": 45, "price": 70000, "roles": ["🌿 Плантера"]},
+            {"rarity": "secret", "chance": 40, "price": 280000, "roles": ["🌺 Гигантский бутон"]},
+            {"rarity": "secret+", "chance": 15, "price": 1500000, "roles": ["🌳 Мировое древо"]},
+        ]
+    },
+
+    # ---------- Набор 5: secret (кристальные) ----------
+    {
+        "name": "[5] 🌀 Portal Mage",
+        "case_rarity": "secret",
+        "case_price": 0,
+        "key_price": 0,
+        "case_crystal_price": 50,
+        "key_crystal_price": 20,
+        "rarities": [
+            {"rarity": "legendary", "chance": 40, "price": 0, "roles": [], "coins": 5000, "crystals": 5},
+            {"rarity": "secret", "chance": 45, "price": 0, "roles": [], "coins": 15000, "crystals": 15},
+            {"rarity": "secret+", "chance": 15, "price": 0, "roles": [], "coins": 50000, "crystals": 50},
+        ]
+    },
+    {
+        "name": "[5] 🌑 Shadow Dweller",
+        "case_rarity": "secret",
+        "case_price": 0,
+        "key_price": 0,
+        "case_crystal_price": 75,
+        "key_crystal_price": 30,
+        "rarities": [
+            {"rarity": "legendary", "chance": 35, "price": 0, "roles": [], "coins": 8000, "crystals": 8},
+            {"rarity": "secret", "chance": 48, "price": 0, "roles": [], "coins": 25000, "crystals": 25},
+            {"rarity": "secret+", "chance": 17, "price": 0, "roles": [], "coins": 80000, "crystals": 80},
+        ]
+    },
+    {
+        "name": "[5] 🌠 Star Sculptor",
+        "case_rarity": "secret",
+        "case_price": 0,
+        "key_price": 0,
+        "case_crystal_price": 100,
+        "key_crystal_price": 40,
+        "rarities": [
+            {"rarity": "legendary", "chance": 30, "price": 0, "roles": [], "coins": 12000, "crystals": 12},
+            {"rarity": "secret", "chance": 50, "price": 0, "roles": [], "coins": 40000, "crystals": 40},
+            {"rarity": "secret+", "chance": 20, "price": 0, "roles": [], "coins": 120000, "crystals": 120},
+        ]
+    },
+    {
+        "name": "[5] 🌌 Nebula Weaver",
+        "case_rarity": "secret",
+        "case_price": 0,
+        "key_price": 0,
+        "case_crystal_price": 150,
+        "key_crystal_price": 60,
+        "rarities": [
+            {"rarity": "secret", "chance": 55, "price": 0, "roles": [], "coins": 60000, "crystals": 60},
+            {"rarity": "secret+", "chance": 45, "price": 0, "roles": [], "coins": 200000, "crystals": 200},
+        ]
+    },
+    {
+        "name": "[5] 🌃 Moon Lord",
+        "case_rarity": "secret+",
+        "case_price": 0,
+        "key_price": 0,
+        "case_crystal_price": 250,
+        "key_crystal_price": 100,
+        "rarities": [
+            {"rarity": "secret", "chance": 40, "price": 0, "roles": [], "coins": 100000, "crystals": 100},
+            {"rarity": "secret+", "chance": 60, "price": 0, "roles": [], "coins": 500000, "crystals": 500},
         ]
     },
 ]
 
-FREE_CASE_INDEX = 0  # индекс бесплатного кейса в PRESET_CASES
+FREE_CASE_INDEX = 0

@@ -192,10 +192,23 @@ class CaseOpenButton(ui.Button):
             except discord.HTTPException:
                 return
 
+        # Если канал недоступен (или писать туда нельзя) — показываем результат ephemeral-ответом
+        fallback_message = None
+        if public_msg is None and message is interaction:
+            try:
+                fallback_message = await interaction.followup.send(
+                    "✨ Открываю кейс...", ephemeral=True, wait=True,
+                )
+            except discord.HTTPException:
+                fallback_message = None
+
+        def _result_message():
+            return fallback_message if (public_msg is None and message is interaction) else message
+
         # Лёгкая анимация открытия
         for emoji in ("🔑", "✨", "📦"):
             try:
-                await message.edit(content=f"{emoji} Открываю кейс...")
+                await _result_message().edit(content=f"{emoji} Открываю кейс...")
             except discord.HTTPException:
                 break
             await asyncio.sleep(0.4)
@@ -206,7 +219,7 @@ class CaseOpenButton(ui.Button):
             error_text = f"❌ {result['error']}"
 
             try:
-                await message.edit(content=error_text, embed=None)
+                await _result_message().edit(content=error_text, embed=None)
             except discord.HTTPException:
                 pass
 
@@ -221,6 +234,68 @@ class CaseOpenButton(ui.Button):
         emoji = get_rarity_emoji(result["rarity"])
         rarity_name = get_rarity_name(result["rarity"])
         case_name = result.get("case_name", "кейс")
+
+        # Кристальные кейсы: выпала валюта (монеты/кристаллы), а не роль
+        if "coins" in result or "crystals" in result:
+            coins = int(result.get("coins", 0) or 0)
+            crystals = int(result.get("crystals", 0) or 0)
+
+            reward_parts = []
+            if coins:
+                reward_parts.append(f"**{coins:,}** монет 💰".replace(",", " "))
+            if crystals:
+                reward_parts.append(f"**{crystals:,}** кристаллов 💎".replace(",", " "))
+            reward_text = " + ".join(reward_parts) or "ничего"
+
+            embed = discord.Embed(
+                title="🎉 Кейс открыт!",
+                description=(
+                    f"Игрок: {interaction.user.mention}\n"
+                    f"Кейс: **{case_name}**\n"
+                    f"Выпало: {emoji} **{reward_text}**\n"
+                    f"Редкость: **{rarity_name}**"
+                ),
+                color=0x00BCD4,
+            )
+
+            if result["debuff_applied"]:
+                embed.add_field(
+                    name="💀 Кривая рука",
+                    value="Ключ скользнул... Получен дебафф «Кривая рука». Лечится в /shop.",
+                    inline=False,
+                )
+
+            embed.set_footer(text="Открытие видно всем игрокам • /inventory")
+
+            content = (
+                f"🎉 {interaction.user.mention} выбил {emoji} {reward_text} "
+                f"({rarity_name}) из кейса **{case_name}**!"
+            )
+
+            try:
+                await _result_message().edit(content=content, embed=embed)
+            except discord.HTTPException:
+                try:
+                    await _result_message().edit(content=content, embed=None)
+                except discord.HTTPException:
+                    try:
+                        await interaction.edit_original_response(
+                            content=content,
+                            embed=None,
+                            view=None,
+                        )
+                    except discord.HTTPException:
+                        pass
+
+            if public_msg is not None:
+                try:
+                    await interaction.edit_original_response(
+                        content=f"✅ Кейс открыт! Результат: {public_msg.jump_url}",
+                        view=None,
+                    )
+                except discord.HTTPException:
+                    pass
+            return
 
         embed = discord.Embed(
             title="🎉 Кейс открыт!",

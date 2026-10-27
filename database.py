@@ -112,15 +112,21 @@ class Database:
         case_id: int,
         rarity: str,
         drop_chance: int,
-        sell_price: int
+        sell_price: int,
+        reward_coins=None,
+        reward_crystals=None
     ) -> int:
-        """Добавить редкость в кейс и вернуть её ID."""
+        """Добавить редкость в кейс и вернуть её ID.
+
+        reward_coins/reward_crystals — награда-валюта для кристальных кейсов
+        (пресеты набора [5]); если переданы (не None), роль у редкости не нужна.
+        """
         async with self.db.execute(
             """
-            INSERT INTO case_rarities (case_id, rarity, drop_chance, sell_price)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO case_rarities (case_id, rarity, drop_chance, sell_price, reward_coins, reward_crystals)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (case_id, rarity, drop_chance, sell_price)
+            (case_id, rarity, drop_chance, sell_price, reward_coins, reward_crystals)
         ) as cursor:
             await self.db.commit()
             return cursor.lastrowid
@@ -428,6 +434,11 @@ class Database:
         await _add_column("cases", "key_crystal_price", "INTEGER DEFAULT 0")
         await _add_column("market_listings", "currency", "TEXT DEFAULT 'coins'")
 
+        # Награды-валюта для кристальных кейсов (пресеты набора [5]): монеты/кристаллы
+        # хранятся прямо в редкости, роли при этом отсутствуют (roles = []).
+        await _add_column("case_rarities", "reward_coins", "INTEGER DEFAULT NULL")
+        await _add_column("case_rarities", "reward_crystals", "INTEGER DEFAULT NULL")
+
         # История открытий кейсов (для статистики в инвентаре/профиле)
         await self.db.execute("""
             CREATE TABLE IF NOT EXISTS case_open_history (
@@ -712,30 +723,27 @@ class Database:
         await self.db.commit()
 
     async def claim_free_case(self, user_id: int, guild_id: int) -> Dict[str, Any]:
-        """Бесплатный кейс «🌱 Стартовый»: 1 раз в час. Атомарно."""
+        """Бесплатный кейс: 1 раз в час. Атомарно выдаёт кейс + ключ."""
         await self.get_or_create_user(user_id, guild_id)
         now = int(time.time())
 
+        # Ищем активный бесплатный кейс
         rows = await self._fetchall(
             "SELECT id, name FROM cases WHERE guild_id = ? AND is_active = 1 AND is_free = 1",
             (guild_id,)
         )
-        if not rows:  # совместимость со старыми БД: поиск по имени
-            rows = await self._fetchall(
-                "SELECT id, name FROM cases WHERE guild_id = ? AND is_active = 1 AND name LIKE ?",
-                (guild_id, "%Стартовый%")
-            )
         if not rows:
             return {"success": False, "error": "Бесплатный кейс не найден. Админ: /admin → 🛠 Кейсы → ⚡ Готовые пресеты."}
+
         case = rows[0]
 
+        # Проверяем кулдаун
         async with self.db.execute(
             """
             UPDATE users
             SET last_free_case = ?
             WHERE user_id = ? AND guild_id = ? AND COALESCE(last_free_case, 0) <= ?
-            """
-            ,
+            """,
             (now, user_id, guild_id, now - 3600)
         ) as cursor:
             await self.db.commit()
@@ -744,11 +752,24 @@ class Database:
                 left = 3600 - (now - (user.get("last_free_case") or 0))
                 return {"success": False, "cooldown_left": max(0, int(left))}
 
-        ok = await self.add_case(user_id, guild_id, case["id"], 1)
-        if not ok:
+        # Выдаём кейс
+        ok_case = await self.add_case(user_id, guild_id, case["id"], 1)
+        if not ok_case:
             await self.reset_free_case(user_id, guild_id)
-            return {"success": False, "error": "Достигнут лимит хранения (50 шт.)."}
-        await self.add_key(user_id, guild_id, case["id"], 1)
+            return {"success": False, "error": "Достигнут лимит хранения кейсов (50 шт.)."}
+
+        # Выдаём ключ
+        ok_key = await self.add_key(user_id, guild_id, case["id"], 1)
+        if not ok_key:
+            # Возвращаем кейс, если ключ не выдался
+            await self.db.execute(
+                "UPDATE player_cases SET quantity = quantity - 1 WHERE user_id = ? AND guild_id = ? AND case_id = ?",
+                (user_id, guild_id, case["id"])
+            )
+            await self.db.commit()
+            await self.reset_free_case(user_id, guild_id)
+            return {"success": False, "error": "Достигнут лимит хранения ключей (50 шт.)."}
+
         return {"success": True, "case_id": case["id"], "case_name": case["name"], "key_given": True}
 
     async def free_case_cooldown_left(self, user_id: int, guild_id: int) -> int:
@@ -1364,13 +1385,13 @@ class Database:
 
     async def get_random_role_from_case(self, case_id: int, luck_bonus: int = 0) -> Optional[Dict[str, Any]]:
         case_details = await self.get_case_details(case_id)
-
         if not case_details:
             return None
 
         rarities = [
             rarity for rarity in case_details["rarities"]
-            if rarity["roles"]
+            if rarity["roles"] or rarity.get("reward_coins") is not None
+            or rarity.get("reward_crystals") is not None
         ]
 
         if not rarities:
@@ -1390,11 +1411,20 @@ class Database:
 
         selected_rarity = random.choices(rarities, weights=weights, k=1)[0]
 
-        return {
+        result = {
             "rarity": selected_rarity["rarity"],
-            "role_id": random.choice(selected_rarity["roles"]),
-            "market_price": selected_rarity["sell_price"]
+            "market_price": selected_rarity.get("sell_price", 0)
         }
+
+        # Секретные (кристальные) кейсы: монеты и кристаллы вместо роли
+        if selected_rarity.get("reward_coins") is not None or selected_rarity.get("reward_crystals") is not None:
+            result["coins"] = selected_rarity.get("reward_coins") or 0
+            result["crystals"] = selected_rarity.get("reward_crystals") or 0
+            result["role_id"] = 0
+        else:
+            result["role_id"] = random.choice(selected_rarity["roles"])
+
+        return result
 
     async def open_case(self, user_id: int, guild_id: int, case_id: int) -> Dict[str, Any]:
         case_details = await self.get_case_details(case_id)
@@ -1423,7 +1453,7 @@ class Database:
         reward = await self.get_random_role_from_case(case_id, luck_bonus=luck_level)
 
         if not reward:
-            return {"success": False, "error": "В кейсе нет доступных ролей."}
+            return {"success": False, "error": "В кейсе нет доступных наград."}
 
         if not await self.use_case(user_id, guild_id, case_id):
             return {"success": False, "error": "Не удалось использовать кейс."}
@@ -1442,7 +1472,9 @@ class Database:
             INSERT INTO case_open_history (user_id, guild_id, case_id, role_id, rarity)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (user_id, guild_id, case_id, reward["role_id"], reward["rarity"])
+            (user_id, guild_id, case_id,
+             reward["role_id"] if "role_id" in reward else 0,
+             reward["rarity"])
         )
         await self.db.commit()
 
@@ -1457,6 +1489,27 @@ class Database:
                 await self.update_broken_key_cost(user_id, guild_id, case_details["key_price"])
                 debuff_applied = True
 
+        # Проверяем, есть ли в награде монеты/кристаллы (секретные кейсы)
+        if "coins" in reward or "crystals" in reward:
+            coins = reward.get("coins", 0)
+            crystals = reward.get("crystals", 0)
+            if coins > 0:
+                await self.update_coins(user_id, guild_id, coins)
+            if crystals > 0:
+                await self.update_crystals(user_id, guild_id, crystals)
+            return {
+                "success": True,
+                "duplicate": False,
+                "debuff_applied": debuff_applied,
+                "rarity": reward["rarity"],
+                "role_id": 0,
+                "coins": coins,
+                "crystals": crystals,
+                "market_price": 0,
+                "case_name": case_details["name"]
+            }
+
+        # Обычная роль
         async with self.db.execute(
             """
             SELECT COUNT(*) AS count

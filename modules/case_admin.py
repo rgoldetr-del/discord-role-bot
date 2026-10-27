@@ -1276,7 +1276,49 @@ class CaseAdminListView(ui.View):
 
     async def refresh(self, interaction: discord.Interaction):
         cases = await self._load_cases()
-        embed = self._build(cases, include_back=True)
+
+        embed = discord.Embed(
+            title="📦 Управление кейсами",
+            description="Нажми на кейс, чтобы настроить его.",
+            color=0xFFD700
+        )
+
+        self.clear_items()
+        self._add_top_buttons()
+
+        if not cases:
+            embed.description = "Кейсов пока нет.\nНажми кнопку выше, чтобы создать первый кейс."
+            await deliver_message(interaction, embed=embed, view=self)
+            return
+
+        pages = max(1, (len(cases) + self.per_page - 1) // self.per_page)
+        self.page = max(0, min(self.page, pages - 1))
+        start = self.page * self.per_page
+        end = start + self.per_page
+        page_cases = cases[start:end]
+
+        for case in page_cases:
+            status = "✅" if case["is_active"] else "📦"
+            label = f"{status} {case['name']} #{case['id']}"[:80]
+            button = ui.Button(
+                style=discord.ButtonStyle.success if case["is_active"] else discord.ButtonStyle.secondary,
+                label=label,
+                custom_id=f"case_admin_{case['id']}_{uuid.uuid4().hex[:6]}"
+            )
+            button.callback = self.make_case_callback(case["id"])
+            self.add_item(button)
+
+        if pages > 1:
+            if self.page > 0:
+                prev_btn = ui.Button(style=discord.ButtonStyle.secondary, label="◀️ Назад")
+                prev_btn.callback = self.prev_callback
+                self.add_item(prev_btn)
+            if self.page < pages - 1:
+                next_btn = ui.Button(style=discord.ButtonStyle.secondary, label="Вперёд ▶️")
+                next_btn.callback = self.next_callback
+                self.add_item(next_btn)
+            embed.set_footer(text=f"Страница {self.page + 1}/{pages}")
+
         await deliver_message(interaction, embed=embed, view=self)
 
     async def refresh_message(self, message):
@@ -1285,7 +1327,49 @@ class CaseAdminListView(ui.View):
 
         try:
             cases = await self._load_cases()
-            embed = self._build(cases, include_back=True)
+
+            embed = discord.Embed(
+                title="📦 Управление кейсами",
+                description="Нажми на кейс, чтобы настроить его.",
+                color=0xFFD700
+            )
+
+            self.clear_items()
+            self._add_top_buttons()
+
+            if not cases:
+                embed.description = "Кейсов пока нет.\nНажми кнопку выше, чтобы создать первый кейс."
+                await message.edit(embed=embed, view=self)
+                return
+
+            pages = max(1, (len(cases) + self.per_page - 1) // self.per_page)
+            self.page = max(0, min(self.page, pages - 1))
+            start = self.page * self.per_page
+            end = start + self.per_page
+            page_cases = cases[start:end]
+
+            for case in page_cases:
+                status = "✅" if case["is_active"] else "📦"
+                label = f"{status} {case['name']} #{case['id']}"[:80]
+                button = ui.Button(
+                    style=discord.ButtonStyle.success if case["is_active"] else discord.ButtonStyle.secondary,
+                    label=label,
+                    custom_id=f"case_admin_{case['id']}_{uuid.uuid4().hex[:6]}"
+                )
+                button.callback = self.make_case_callback(case["id"])
+                self.add_item(button)
+
+            if pages > 1:
+                if self.page > 0:
+                    prev_btn = ui.Button(style=discord.ButtonStyle.secondary, label="◀️ Назад")
+                    prev_btn.callback = self.prev_callback
+                    self.add_item(prev_btn)
+                if self.page < pages - 1:
+                    next_btn = ui.Button(style=discord.ButtonStyle.secondary, label="Вперёд ▶️")
+                    next_btn.callback = self.next_callback
+                    self.add_item(next_btn)
+                embed.set_footer(text=f"Страница {self.page + 1}/{pages}")
+
             await message.edit(embed=embed, view=self)
         except discord.HTTPException:
             pass

@@ -404,10 +404,15 @@ class CaseAdminListView(ui.View):
         self.page = 0
         self.per_page = 8
 
-    async def refresh(self, interaction: discord.Interaction):
-        cases = await db.get_all_cases(self.guild_id, active_only=False)
-        cases = [dict(case) for case in cases]
+    async def _load_cases(self):
+        """Загружает все кейсы гильдии (включая неактивные), новые сверху."""
+        rows = await db.get_all_cases(self.guild_id, active_only=False)
+        cases = [dict(row) for row in rows]
         cases.sort(key=lambda x: x["id"], reverse=True)
+        return cases
+
+    async def refresh(self, interaction: discord.Interaction):
+        cases = await self._load_cases()
 
         embed = discord.Embed(
             title="📦 Управление кейсами",

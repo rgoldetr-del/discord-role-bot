@@ -131,6 +131,13 @@ class WheelSpinButton(ui.Button):
         await run_spin(interaction)
 
 
+def _wheel_view(user_id: int) -> ui.View:
+    """Кнопку нужно класть внутрь View, иначе дискорд не примет её как компонент."""
+    view = ui.View(timeout=None)
+    view.add_item(WheelSpinButton(user_id))
+    return view
+
+
 async def run_spin(interaction: discord.Interaction):
     """Основная логика вращения. Используется и командой, и кнопкой."""
     guild = interaction.guild
@@ -161,7 +168,7 @@ async def run_spin(interaction: discord.Interaction):
                 f"⏰ Колесо уже крутили. Следующее вращение: <t:{until}:R>\n"
                 f"Pity-счётчик: {check['pity']}/{PITY_MAX}"
             ),
-            view=WheelSpinButton(user_id),
+            view=_wheel_view(user_id),
         )
         return
 
@@ -247,6 +254,7 @@ def register(bot):
             return
 
         check = await db.can_spin_wheel(interaction.user.id, interaction.guild.id)
+
         if check["can_spin"]:
             await run_spin(interaction)
             return
@@ -262,7 +270,7 @@ def register(bot):
             color=0x9C27B0,
         )
         await interaction.response.send_message(
-            embed=embed, view=WheelSpinButton(interaction.user.id), ephemeral=True,
+            embed=embed, view=_wheel_view(interaction.user.id), ephemeral=True,
         )
 
     @bot.tree.command(name="wheel_info", description="Посмотреть награды почасового колеса")
@@ -270,7 +278,7 @@ def register(bot):
     async def wheel_info(interaction: discord.Interaction):
         embed = discord.Embed(
             title="🎡 Награды почасового колеса",
-            description="Крутить можно **раз в час**. Все выигрыши падают в /inventory.\n\n",
+            description="Крутить можно **раз в час**. Все выигрыши падают в /inventory.\n",
             color=0x9C27B0,
         )
         embed.add_field(name="Шансы выпадения", value=_rewards_text(), inline=False)
@@ -278,16 +286,15 @@ def register(bot):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-    # --- Автозащита всех UI-коллбэков модуля (кнопки/селекты/модалки) ---
-    # make_resilient перехватывает любые исключения (в т.ч. 404 Unknown
-    # interaction) и подстраивает сигнатуру под стиль вызова библиотеки.
-    for _cls in list(globals().values()):
-        try:
-            if not (isinstance(_cls, type) and (
-                    issubclass(_cls, discord.ui.View) or issubclass(_cls, discord.ui.Item))):
-                continue
-        except TypeError:
+# --- Автозащита всех UI-коллбэков модуля (кнопки/селекты/модалки) ---
+for _cls in list(globals().values()):
+    try:
+        if not (isinstance(_cls, type) and (
+                issubclass(_cls, discord.ui.View) or issubclass(_cls, discord.ui.Item))):
             continue
-        for _name, _attr in list(vars(_cls).items()):
-            if _name == "callback" and callable(_attr) and not getattr(_attr, "_wrapped_by_guard", False):
-                setattr(_cls, _name, make_resilient(_attr))
+    except TypeError:
+        continue
+
+    for _name, _attr in list(vars(_cls).items()):
+        if _name == "callback" and callable(_attr) and not getattr(_attr, "_wrapped_by_guard", False):
+            setattr(_cls, _name, make_resilient(_attr))

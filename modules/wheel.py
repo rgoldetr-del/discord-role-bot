@@ -266,9 +266,9 @@ def register(bot):
             ),
             color=0x9C27B0,
         )
-    await interaction.response.send_message(
-        embed=embed, view=_wheel_view(interaction.user.id), ephemeral=True,
-    )
+        await interaction.response.send_message(
+            embed=embed, view=_wheel_view(interaction.user.id), ephemeral=True,
+        )
 
     @bot.tree.command(name="wheel_info", description="Посмотреть награды почасового колеса")
     @safe_command

@@ -1093,6 +1093,13 @@ class CaseAdminListView(ui.View):
         self.per_page = 8
         self._add_top_buttons()
 
+    async def _load_cases(self):
+        """Загружает все кейсы гильдии (включая неактивные), новые сверху."""
+        cases = await db.get_all_cases(self.guild_id, active_only=False)
+        cases = [dict(case) for case in cases]
+        cases.sort(key=lambda x: x["id"], reverse=True)
+        return cases
+
     def _add_top_buttons(self):
         create_btn = ui.Button(
             style=discord.ButtonStyle.success,

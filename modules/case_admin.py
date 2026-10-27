@@ -1104,13 +1104,29 @@ class CaseAdminListView(ui.View):
         create_btn = ui.Button(
             style=discord.ButtonStyle.success,
             label="➕ Создать кейс",
-            custom_id=f"ca_create_{self.guild_id}_{self.user_id}"
+            custom_id=f"create_case_{uuid.uuid4().hex[:6]}"
         )
         create_btn.callback = self.create_callback
         self.add_item(create_btn)
 
-    @ui.button(label="⚡ Готовые пресеты", style=discord.ButtonStyle.primary, custom_id="ca:preset")
-    async def preset_btn(self, interaction: discord.Interaction):
+        preset_btn = ui.Button(
+            style=discord.ButtonStyle.primary,
+            label="⚡ Готовые пресеты",
+            custom_id="ca:preset"
+        )
+        preset_btn.callback = self.preset_callback
+        self.add_item(preset_btn)
+
+        gen_all_btn = ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="🤖 Роли для всех кейсов",
+            custom_id="ca:genall"
+        )
+        gen_all_btn.callback = self.gen_all_callback
+        self.add_item(gen_all_btn)
+
+    # --- Логика кнопки «⚡ Готовые пресеты» (вызывается через preset_callback) ---
+    async def _preset_impl(self, interaction: discord.Interaction):
         """Создать готовые кейсы с редкостями и ролями + полная валидация каждого шага."""
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)
@@ -1394,7 +1410,7 @@ class CaseAdminListView(ui.View):
             return
 
         panel_message = getattr(interaction, "message", None)
-        await _install_presets_background(interaction)
+        await self._preset_impl(interaction)
         await self.refresh_message(panel_message)
 
     async def gen_all_callback(self, interaction: discord.Interaction, *_):

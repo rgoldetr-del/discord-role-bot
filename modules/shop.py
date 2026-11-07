@@ -484,23 +484,22 @@ class ShopView(ui.View):
                 await interaction.response.send_message(f"❌ {result.get('error', 'Не получилось.')}", ephemeral=True)
             return
 
-        if kind in ("c", "k"):
+        if kind in ("c", "k", "b"):
             # открываем модалку количества (1-50 шт.)
             try:
                 case_id = int(arg)
             except ValueError:
                 return
+            
+            # Защита от покупки бесплатных кейсов через выпадающий список
+            cases = await self.load_cases()
+            case = next((c for c in cases if c["id"] == case_id), None)
+            if case and case.get("is_free"):
+                await interaction.response.send_message("❌ Этот кейс можно забрать только бесплатно (1 раз в час).", ephemeral=True)
+                return
+
             await interaction.response.send_modal(
                 BuyQuantityModal(self, kind, case_id, currency))
-            return
-
-        if kind == "b":  # связка кейс + ключ
-            try:
-                case_id = int(arg)
-            except ValueError:
-                return
-            await interaction.response.send_modal(
-                BuyQuantityModal(self, "b", case_id, currency))
             return
 
         if kind == "e":
@@ -604,6 +603,12 @@ class ShopView(ui.View):
         if kind in ("k", "b") and no_key_needed:
             await interaction.response.send_message(
                 "❌ Этот кейс открывается без ключа — покупай только кейсы.", ephemeral=True)
+            return
+
+        # Защита от покупки самих бесплатных кейсов через модалку
+        if case.get("is_free"):
+            await interaction.response.send_message(
+                "❌ Этот кейс можно забрать только бесплатно (1 раз в час).", ephemeral=True)
             return
 
         if currency == "coins":
@@ -716,6 +721,10 @@ class ShopView(ui.View):
             case = next((c for c in cases if c["id"] == case_id), None)
             if not case:
                 return None
+
+            # Принудительно переключаем на тип "f", если кейс бесплатный
+            if case.get("is_free"):
+                kind = "f"
 
             emoji = get_rarity_emoji(case["rarity"])
             rarity_name = get_rarity_name(case["rarity"])

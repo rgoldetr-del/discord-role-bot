@@ -47,6 +47,7 @@ WHEEL_REWARDS = [
 ]
 
 KEY_FALLBACK_VALUE = {"common": 50, "rare": 150, "epic": 500}
+CASE_FALLBACK_COINS = 300  # компенсация, если кейс выдать нельзя
 
 KEY_PREFERRED_RARITIES = {
     "common": ["common", "uncommon"],
@@ -81,8 +82,19 @@ async def _set_pity(user_id: int, guild_id: int, value: int):
     await db.db.commit()
 
 
+def build_reward_pool(active_cases) -> list:
+    """В колесе крутятся только те награды, которые реально можно выдать:
+    - «кейс» убирается, если на сервере нет активных кейсов
+      (ключи остаются — у них есть фолбэк на монеты)."""
+    pool = [r for r in WHEEL_REWARDS if not (r["type"] == "case" and not active_cases)]
+    return pool
+
+
 async def _grant(reward: dict, user_id: int, guild_id: int, active_cases) -> str:
-    """Выдаёт награду, возвращает текст результата."""
+    """Выдаёт награду, возвращает текст результата.
+
+    Если выдать физически нельзя (нет кейсов / хранилище полно) —
+    компенсируем монетами, чтобы спин не пропадал."""
     rtype = reward["type"]
 
     if rtype == "coins":
@@ -94,8 +106,17 @@ async def _grant(reward: dict, user_id: int, guild_id: int, active_cases) -> str
         return f"💎 Выпало **{reward['amount']}** кристаллов."
 
     if rtype == "case":
+        if not active_cases:
+            amount = CASE_FALLBACK_COINS
+            await db.update_coins(user_id, guild_id, amount)
+            return (f"💰 На сервере нет активных кейсов — вместо кейса выпало "
+                    f"**{amount}** монет.")
         case = random.choice(active_cases)
-        await db.add_case(user_id, guild_id, case["id"], reward["quantity"])
+        if not await db.add_case(user_id, guild_id, case["id"], reward["quantity"]):
+            # хранилище кейсов полно (50 шт.) — компенсируем монетами
+            await db.update_coins(user_id, guild_id, CASE_FALLBACK_COINS)
+            return (f"💰 Хранилище кейсов заполнено — вместо кейса выпало "
+                    f"**{CASE_FALLBACK_COINS}** монет.")
         return (f"📦 Выпал бесплатный кейс **{case['name']}** "
                 f"({get_rarity_name(case['case_rarity'])})! Лежит в /inventory.")
 
@@ -107,7 +128,12 @@ async def _grant(reward: dict, user_id: int, guild_id: int, active_cases) -> str
             return (f"💰 На сервере пока нет кейсов — вместо ключей выпало "
                     f"**{amount:,}** монет.".replace(",", " "))
         case = choose_case_for_key(active_cases, reward["tier"])
-        await db.add_key(user_id, guild_id, case["id"], quantity)
+        if not await db.add_key(user_id, guild_id, case["id"], quantity):
+            # хранилище ключей полно — компенсируем монетами
+            amount = KEY_FALLBACK_VALUE.get(reward["tier"], 50) * quantity
+            await db.update_coins(user_id, guild_id, amount)
+            return (f"💰 Хранилище ключей заполнено — вместо ключей выпало "
+                    f"**{amount:,}** монет.".replace(",", " "))
         return (f"🔑 Выпало **{quantity}** {plural_keys(quantity)} "
                 f"от кейса **{case['name']}** ({get_rarity_name(case['case_rarity'])}) "
                 f"— лежат в /inventory.")
@@ -198,13 +224,20 @@ async def run_spin(interaction: discord.Interaction):
     # Гарантированный ключ после PITY_MAX пустых.
     if pity >= PITY_MAX and active_cases:
         case = choose_case_for_key(active_cases, "rare")
-        await db.add_key(user_id, guild_id, case["id"], 1)
-        await _set_pity(user_id, guild_id, 0)
-        result = (f"🎉 **Pity-сброс!** Выпал **1 ключ** от кейса "
-                  f"**{case['name']}** ({get_rarity_name(case['case_rarity'])}).")
+        if await db.add_key(user_id, guild_id, case["id"], 1):
+            await _set_pity(user_id, guild_id, 0)
+            result = (f"🎉 **Pity-сброс!** Выпал **1 ключ** от кейса "
+                      f"**{case['name']}** ({get_rarity_name(case['case_rarity'])}).")
+        else:
+            # хранилище ключей полно — компенсируем монетами, pity сбрасываем
+            await db.update_coins(user_id, guild_id, KEY_FALLBACK_VALUE["rare"])
+            await _set_pity(user_id, guild_id, 0)
+            result = (f"🎉 **Pity-сброс!** Хранилище ключей заполнено — "
+                      f"выпало **{KEY_FALLBACK_VALUE['rare']}** монет.")
     else:
-        weights = [r["weight"] for r in WHEEL_REWARDS]
-        reward = random.choices(WHEEL_REWARDS, weights=weights, k=1)[0]
+        pool = build_reward_pool(active_cases)
+        weights = [r["weight"] for r in pool]
+        reward = random.choices(pool, weights=weights, k=1)[0]
         if reward["type"] == "empty":
             await _set_pity(user_id, guild_id, pity + 1)
             result = f"💨 **Пусто.** Pity-счётчик: {pity + 1}/{PITY_MAX}"

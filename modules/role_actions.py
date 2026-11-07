@@ -744,7 +744,9 @@ class GiftModal(ui.Modal):
         )
         await db.db.commit()
 
-        await interaction.response.send_message(
+        # ответ уже сделан через defer() выше — шлём followup, иначе
+        # InteractionResponded и подтверждение не доходит
+        await interaction.followup.send(
             f"✅ Роль подарена {member.mention}.",
             ephemeral=True
         )

@@ -54,7 +54,7 @@ class CaseInfoView(ui.View):
 
         role_names = []
         for rarity in case.get("rarities", []):
-            for role_id in rarity.get("role_ids", []):
+            for role_id in rarity.get("roles", []):
                 role = self.guild.get_role(role_id)
                 if role:
                     role_names.append(f"{get_rarity_emoji(rarity['rarity'])} {role.name}")

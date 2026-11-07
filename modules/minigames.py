@@ -27,20 +27,55 @@ MIN_BET_VALUE = 10
 MAX_BET_VALUE = 25000
 
 
-async def allowed_max_value(interaction: discord.Interaction) -> int:
+async def allowed_max_for(user_id: int, guild_id: int) -> int:
+    """Максимальная ставка игрока (учитывает эффект «Азарт» x1.5)."""
     try:
-        db_max = await db.get_max_bet(interaction.user.id, interaction.guild.id)
+        db_max = await db.get_max_bet(user_id, guild_id)
     except Exception:
         db_max = 1000
 
-    user = await db.get_or_create_user(interaction.user.id, interaction.guild.id)
+    user = await db.get_or_create_user(user_id, guild_id)
 
     crystal_value = user["crystals"] * BET_VALUE_EQUIV
 
-    return min(
-        MAX_BET_VALUE,
-        max(MIN_BET_VALUE, int(db_max) + int(crystal_value))
-    )
+    cap = MAX_BET_VALUE
+    try:
+        if await db.has_effect(user_id, guild_id, "high_roller"):
+            # 🔥 Азарт: лимит и потолок увеличиваются в 1.5 раза
+            cap = int(MAX_BET_VALUE * 1.5)
+            db_max = int(db_max * 1.5)
+    except Exception:
+        pass
+
+    return min(cap, max(MIN_BET_VALUE, int(db_max) + int(crystal_value)))
+
+
+async def allowed_max_value(interaction: discord.Interaction) -> int:
+    return await allowed_max_for(interaction.user.id, interaction.guild.id)
+
+
+async def critic_multiplier(user_id: int, guild_id: int) -> float:
+    """⚡ Критик: 10% шанс увеличить выигрыш на 25%. Возвращает множитель."""
+    try:
+        if await db.has_effect(user_id, guild_id, "critic") and random.random() < 0.10:
+            return 1.25
+    except Exception:
+        pass
+    return 1.0
+
+
+async def crystal_guard_text(user_id: int, guild_id: int, bet_crystals: int) -> str:
+    """💎 Хранитель кристаллов: 15% шанс вернуть ставку кристаллами при
+    проигрыше. Возвращает текст для сообщения (или пустую строку)."""
+    if bet_crystals <= 0:
+        return ""
+    try:
+        refunded = await db.maybe_refund_crystals_on_loss(user_id, guild_id, bet_crystals)
+    except Exception:
+        return ""
+    if refunded:
+        return f"\n💎 Хранитель кристаллов вернул **{refunded}** 💎!"
+    return ""
 
 
 def draw_card() -> int:
@@ -354,6 +389,9 @@ async def play_roulette(interaction: discord.Interaction, color: str, bet_coins:
 
     if result_color == color:
         multiplier = 36 if color == "green" else 2
+        # ⚡ Критик: 10% шанс +25% к выигрышу
+        multiplier *= await critic_multiplier(
+            interaction.user.id, interaction.guild.id)
         payout_coins, payout_crystals, bonus = await award_mixed_win(
             interaction.user.id,
             interaction.guild.id,
@@ -367,6 +405,8 @@ async def play_roulette(interaction: discord.Interaction, color: str, bet_coins:
             f"✅ Выигрыш: **{format_reward(payout_coins, payout_crystals)}**."
         )
 
+        if multiplier != (36 if color == "green" else 2):
+            text += "\n⚡ Критик: выигрыш увеличен на 25%!"
         if bonus > 0:
             text += f"\n💎 Бонус Богача: +{bonus} ценности."
     else:
@@ -374,6 +414,7 @@ async def play_roulette(interaction: discord.Interaction, color: str, bet_coins:
             f"Выпало **{number}** {color_names[result_color]}.\n"
             f"❌ Проигрыш: **{format_bet(bet_coins, bet_crystals)}**."
         )
+        text += await crystal_guard_text(interaction.user.id, interaction.guild.id, bet_crystals)
 
     await interaction.response.send_message(text, ephemeral=True)
 
@@ -393,12 +434,14 @@ async def play_dice(interaction: discord.Interaction, choice: str, bet_coins: in
         win = True
 
     if win:
+        multiplier = 1.95 * await critic_multiplier(
+            interaction.user.id, interaction.guild.id)
         payout_coins, payout_crystals, bonus = await award_mixed_win(
             interaction.user.id,
             interaction.guild.id,
             bet_coins,
             bet_crystals,
-            1.95
+            multiplier
         )
 
         text = (
@@ -406,6 +449,8 @@ async def play_dice(interaction: discord.Interaction, choice: str, bet_coins: in
             f"✅ Выигрыш: **{format_reward(payout_coins, payout_crystals)}**."
         )
 
+        if multiplier != 1.95:
+            text += "\n⚡ Критик: выигрыш увеличен на 25%!"
         if bonus > 0:
             text += f"\n💎 Бонус Богача: +{bonus} ценности."
     else:
@@ -413,6 +458,7 @@ async def play_dice(interaction: discord.Interaction, choice: str, bet_coins: in
             f"🎲 Выпало: **{roll}**\n"
             f"❌ Проигрыш: **{format_bet(bet_coins, bet_crystals)}**."
         )
+        text += await crystal_guard_text(interaction.user.id, interaction.guild.id, bet_crystals)
 
     await interaction.response.send_message(text, ephemeral=True)
 
@@ -424,31 +470,34 @@ async def play_coin(interaction: discord.Interaction, choice: str, bet_coins: in
 
     result = "heads" if random.random() < 0.5 else "tails"
 
+    result_name = "Орёл" if result == "heads" else "Решка"
+
     if result == choice:
+        multiplier = 1.95 * await critic_multiplier(
+            interaction.user.id, interaction.guild.id)
         payout_coins, payout_crystals, bonus = await award_mixed_win(
             interaction.user.id,
             interaction.guild.id,
             bet_coins,
             bet_crystals,
-            1.95
+            multiplier
         )
-
-        result_name = "Орёл" if result == "heads" else "Решка"
 
         text = (
             f"🪙 Выпало: **{result_name}**\n"
             f"✅ Выигрыш: **{format_reward(payout_coins, payout_crystals)}**."
         )
 
+        if multiplier != 1.95:
+            text += "\n⚡ Критик: выигрыш увеличен на 25%!"
         if bonus > 0:
             text += f"\n💎 Бонус Богача: +{bonus} ценности."
     else:
-        result_name = "Орёл" if result == "heads" else "Решка"
-
         text = (
             f"🪙 Выпало: **{result_name}**\n"
             f"❌ Проигрыш: **{format_bet(bet_coins, bet_crystals)}**."
         )
+        text += await crystal_guard_text(interaction.user.id, interaction.guild.id, bet_crystals)
 
     await interaction.response.send_message(text, ephemeral=True)
 
@@ -550,7 +599,10 @@ class BlackjackView(ui.View):
 
         if reason == "bust":
             embed = self.make_embed()
-            embed.description = f"💥 Перебор! Проигрыш: **{format_bet(self.bet_coins, self.bet_crystals)}**."
+            embed.description = (
+                f"💥 Перебор! Проигрыш: **{format_bet(self.bet_coins, self.bet_crystals)}**."
+                + await crystal_guard_text(self.user_id, self.guild_id, self.bet_crystals)
+            )
             await self._edit(interaction, embed)
             return
 
@@ -561,6 +613,9 @@ class BlackjackView(ui.View):
 
         if dealer_value > 21 or player_value > dealer_value:
             multiplier = 2.5 if player_value == 21 and len(self.player_hand) == 2 else 2
+            base_mult = multiplier
+            # ⚡ Критик: 10% шанс +25% к выигрышу
+            multiplier *= await critic_multiplier(self.user_id, self.guild_id)
 
             payout_coins, payout_crystals, bonus = await award_mixed_win(
                 self.user_id,
@@ -573,6 +628,8 @@ class BlackjackView(ui.View):
             embed = self.make_embed()
             embed.description = f"🏆 Победа! Выигрыш: **{format_reward(payout_coins, payout_crystals)}**."
 
+            if multiplier != base_mult:
+                embed.description += "\n⚡ Критик: выигрыш увеличен на 25%!"
             if bonus > 0:
                 embed.description += f"\n💎 Бонус Богача: +{bonus} ценности."
 
@@ -583,7 +640,10 @@ class BlackjackView(ui.View):
             embed.description = "🤝 Ничья. Ставка возвращена."
         else:
             embed = self.make_embed()
-            embed.description = f"❌ Дилер сильнее. Проигрыш: **{format_bet(self.bet_coins, self.bet_crystals)}**."
+            embed.description = (
+                f"❌ Дилер сильнее. Проигрыш: **{format_bet(self.bet_coins, self.bet_crystals)}**."
+                + await crystal_guard_text(self.user_id, self.guild_id, self.bet_crystals)
+            )
 
         await self._edit(interaction, embed)
 
@@ -609,6 +669,19 @@ class MinesView(ui.View):
         self.active = True
 
         self.refresh_buttons()
+
+    async def on_timeout(self):
+        # Игра брошена без «Забрать» — выплачиваем честный результат
+        if not self.active:
+            return
+        self.active = False
+        if len(self.revealed) > 0:
+            await award_mixed_win(
+                self.user_id, self.guild_id,
+                self.bet_coins, self.bet_crystals, self.multiplier(),
+            )
+        else:
+            await award_mixed(self.user_id, self.guild_id, self.bet_coins, self.bet_crystals)
 
     def multiplier(self):
         return round(1 + len(self.revealed) * 0.25, 2)
@@ -676,7 +749,10 @@ class MinesView(ui.View):
                 self.refresh_buttons()
 
                 embed = self.make_embed()
-                embed.description = f"💥 Бум! Проигрыш: **{format_bet(self.bet_coins, self.bet_crystals)}**."
+                embed.description = (
+                    f"💥 Бум! Проигрыш: **{format_bet(self.bet_coins, self.bet_crystals)}**."
+                    + await crystal_guard_text(self.user_id, self.guild_id, self.bet_crystals)
+                )
                 await self._edit(interaction, embed)
                 return
 
@@ -746,6 +822,7 @@ class RPSInviteView(ui.View):
         self.guild_id = guild_id
         self.bet_coins = bet_coins
         self.bet_crystals = bet_crystals
+        self.message = None
 
         join = ui.Button(
             style=discord.ButtonStyle.success,
@@ -755,6 +832,18 @@ class RPSInviteView(ui.View):
         join.callback = self.join_callback
         self.add_item(join)
 
+    async def on_timeout(self):
+        # Вызов никто не принял — возвращаем ставку создателю
+        await award_mixed(self.creator_id, self.guild_id, self.bet_coins, self.bet_crystals)
+        if self.message is not None:
+            try:
+                await self.message.edit(
+                    content=f"⌛ Вызов не принят — ставка возвращена <@{self.creator_id}>.",
+                    view=None,
+                )
+            except discord.HTTPException:
+                pass
+
     async def join_callback(self, interaction: discord.Interaction):
         if interaction.user.id == self.creator_id:
             await interaction.response.send_message("Ты уже участник.", ephemeral=True)
@@ -762,6 +851,16 @@ class RPSInviteView(ui.View):
 
         if interaction.user.bot:
             await interaction.response.send_message("Боты не могут играть.", ephemeral=True)
+            return
+
+        bet_value = mixed_value(self.bet_coins, self.bet_crystals)
+        # присоединяющийся подчиняется тем же лимитам ставки, что и создатель
+        max_value = await allowed_max_for(interaction.user.id, self.guild_id)
+        if bet_value > max_value:
+            await interaction.response.send_message(
+                f"❌ Эта ставка выше твоего лимита (максимум {format_bet(max_value, 0)}).",
+                ephemeral=True,
+            )
             return
 
         if not await try_spend_mixed(interaction.user.id, self.guild_id, self.bet_coins, self.bet_crystals):
@@ -778,6 +877,9 @@ class RPSInviteView(ui.View):
             self.bet_coins,
             self.bet_crystals
         )
+        game_view.message = interaction.message
+
+        self.stop()  # игра началась — отменяем таймаут-возврат ставки создателя
 
         await interaction.response.edit_message(
             content=(
@@ -799,6 +901,8 @@ class RPSGameView(ui.View):
         self.bet_coins = bet_coins
         self.bet_crystals = bet_crystals
         self.choices = {}
+        self.message = None
+        self.settled = False
 
         options = [
             ("🪨 Камень", "rock"),
@@ -814,6 +918,22 @@ class RPSGameView(ui.View):
             )
             button.callback = self.make_choice_callback(value)
             self.add_item(button)
+
+    async def on_timeout(self):
+        # Кто-то не выбрал вовремя — ставки обоим возвращаются
+        if self.settled:
+            return
+        self.settled = True
+        await award_mixed(self.player1, self.guild_id, self.bet_coins, self.bet_crystals)
+        await award_mixed(self.player2, self.guild_id, self.bet_coins, self.bet_crystals)
+        if self.message is not None:
+            try:
+                await self.message.edit(
+                    content="⌛ Время вышло — кто-то не сделал выбор. Ставки возвращены.",
+                    view=None,
+                )
+            except discord.HTTPException:
+                pass
 
     def make_choice_callback(self, value: str):
         async def callback(*args):
@@ -855,6 +975,8 @@ class RPSGameView(ui.View):
             # СНАЧАЛА отвечаем на интеракцию, иначе дискорд «убьёт» кнопку.
             winner = self.get_winner()
             self.clear_items()
+            self.settled = True
+            self.stop()  # итог подведён — отменяем таймаут-возврат ставок
 
             if winner is None:
                 await award_mixed(self.player1, self.guild_id, self.bet_coins, self.bet_crystals)
@@ -910,6 +1032,10 @@ async def create_pvp_rps(interaction: discord.Interaction, bet_coins: int, bet_c
         ),
         view=view
     )
+    try:
+        view.message = await interaction.original_response()
+    except discord.HTTPException:
+        pass
 
 
 class PvPBlackjackInviteView(ui.View):
@@ -919,6 +1045,7 @@ class PvPBlackjackInviteView(ui.View):
         self.guild_id = guild_id
         self.bet_coins = bet_coins
         self.bet_crystals = bet_crystals
+        self.message = None
 
         join = ui.Button(
             style=discord.ButtonStyle.success,
@@ -928,6 +1055,18 @@ class PvPBlackjackInviteView(ui.View):
         join.callback = self.join_callback
         self.add_item(join)
 
+    async def on_timeout(self):
+        # Вызов никто не принял — возвращаем ставку создателю
+        await award_mixed(self.creator_id, self.guild_id, self.bet_coins, self.bet_crystals)
+        if self.message is not None:
+            try:
+                await self.message.edit(
+                    content=f"⌛ Вызов не принят — ставка возвращена <@{self.creator_id}>.",
+                    view=None,
+                )
+            except discord.HTTPException:
+                pass
+
     async def join_callback(self, interaction: discord.Interaction):
         if interaction.user.id == self.creator_id:
             await interaction.response.send_message("Ты уже участник.", ephemeral=True)
@@ -935,6 +1074,16 @@ class PvPBlackjackInviteView(ui.View):
 
         if interaction.user.bot:
             await interaction.response.send_message("Боты не могут играть.", ephemeral=True)
+            return
+
+        bet_value = mixed_value(self.bet_coins, self.bet_crystals)
+        # присоединяющийся подчиняется тем же лимитам ставки, что и создатель
+        max_value = await allowed_max_for(interaction.user.id, self.guild_id)
+        if bet_value > max_value:
+            await interaction.response.send_message(
+                f"❌ Эта ставка выше твоего лимита (максимум {format_bet(max_value, 0)}).",
+                ephemeral=True,
+            )
             return
 
         if not await try_spend_mixed(interaction.user.id, self.guild_id, self.bet_coins, self.bet_crystals):
@@ -951,6 +1100,9 @@ class PvPBlackjackInviteView(ui.View):
             self.bet_coins,
             self.bet_crystals
         )
+        game_view.message = interaction.message
+
+        self.stop()  # игра началась — отменяем таймаут-возврат ставки создателя
 
         await interaction.response.edit_message(
             content=(
@@ -984,8 +1136,25 @@ class PvPBlackjackView(ui.View):
         self.dealer_hand = draw_cards(2)
         self.done = False
         self.results = {}
+        self.message = None
 
         self.refresh_buttons()
+
+    async def on_timeout(self):
+        # Игру бросили: не закончившие автоматически «стоят», результат
+        # выплачивается честно — ставки больше не сгорают.
+        if self.done:
+            return
+        for player_id, fin in self.finished.items():
+            if not fin:
+                self.finished[player_id] = True
+        await self.resolve()
+        self.refresh_buttons()
+        if self.message is not None:
+            try:
+                await self.message.edit(embed=self.make_embed(), view=self)
+            except discord.HTTPException:
+                pass
 
     def refresh_buttons(self):
         self.clear_items()
@@ -1045,6 +1214,7 @@ class PvPBlackjackView(ui.View):
 
             if all(self.finished.values()):
                 await self.resolve()
+                self.stop()  # игра завершена — отменяем таймаут
 
             self.refresh_buttons()
             await interaction.response.edit_message(embed=self.make_embed(), view=self)
@@ -1123,7 +1293,10 @@ class PvPBlackjackView(ui.View):
                 await award_mixed(player_id, self.guild_id, self.bet_coins, self.bet_crystals)
                 self.results[player_id] = "🤝 Ничья. Ставка возвращена."
             else:
-                self.results[player_id] = f"❌ Дилер сильнее. Проигрыш {format_bet(self.bet_coins, self.bet_crystals)}."
+                self.results[player_id] = (
+                    f"❌ Дилер сильнее. Проигрыш {format_bet(self.bet_coins, self.bet_crystals)}."
+                    + await crystal_guard_text(player_id, self.guild_id, self.bet_crystals)
+                )
 
 
 async def create_pvp_blackjack(interaction: discord.Interaction, bet_coins: int, bet_crystals: int):
@@ -1140,6 +1313,10 @@ async def create_pvp_blackjack(interaction: discord.Interaction, bet_coins: int,
         ),
         view=view
     )
+    try:
+        view.message = await interaction.original_response()
+    except discord.HTTPException:
+        pass
 
 
 def register(bot):

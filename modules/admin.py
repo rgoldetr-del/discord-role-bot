@@ -16,8 +16,29 @@ log = logging.getLogger(__name__)
 
 
 def find_member(guild: discord.Guild, interaction_msg, raw: str):
-    """Найти участника по @mention / ID / имени."""
+    """Найти участника по @mention / ID / имени.
+
+    У modal-submit интеракций interaction.message всегда None, поэтому
+    упоминание парсится прямо из введённой строки (<@ID> / <@!ID> / @ID).
+    """
     raw = raw.strip()
+    if not raw:
+        return None
+
+    # прямое упоминание в тексте: <@123> / <@!123> / @123
+    mention_id = None
+    for prefix in ("<@!", "<@"):
+        if raw.startswith(prefix):
+            mention_id = raw[len(prefix):].rstrip(">")
+            break
+    else:
+        if raw.startswith("@") and raw[1:].isdigit():
+            mention_id = raw[1:]
+    if mention_id is not None and mention_id.isdigit():
+        member = guild.get_member(int(mention_id))
+        if member:
+            return member
+
     if interaction_msg and interaction_msg.mentions:
         for m in interaction_msg.mentions:
             if str(m.id) == raw or raw.lower() in (f"@{m.display_name.lower()}", f"<@{m.id}>"):
@@ -84,8 +105,10 @@ class GiveItemModal(ui.Modal, title="Выдать предмет"):
             await db.add_key(member.id, interaction.guild.id, self.item_id, qty)
             done = f"🔑 **{qty}× ключ** → **{member.mention}**"
         elif self.kind == "effect":
-            await db.add_effect_to_inventory(member.id, interaction.guild.id, self.item_id)
-            done = f"✨ Эффект → **{member.mention}**"
+            hours = max(1, min(24, qty))
+            await db.add_effect_to_inventory(
+                member.id, interaction.guild.id, self.item_id, hours=hours)
+            done = f"✨ Эффект ({hours} ч.) → **{member.mention}**"
         else:
             done = "❌ Неизвестный тип."
 
@@ -350,22 +373,6 @@ class AdminMainView(ui.View):
         await _safe_modal(interaction, ConfirmClean())
 
 
-def _modal_ok(func):
-    """Обёртка коллбэков кнопок/селектов: защищает отSignatureMismatch на разных версиях discord.py.
-
-    Официальный discord.py вызывает callback(self, interaction), форк с хостинга —
-    callback(interaction, item). Функция принимает (self, interaction) и сама определяет,
-    какой из аргументов настоящий Interaction; внутри — чистый async код без ui-декораторов.
-    Возвращает готовый коллбэк для присваивания button.callback / select.callback.
-    """
-    async def wrapper(a, b=None):
-        inter = a if isinstance(a, discord.Interaction) else b
-        if inter is None:
-            log.error("Коллбэк вызван без Interaction")
-            return
-        await func(inter)
-    return wrapper
-
 
 async def _safe_modal(interaction: discord.Interaction, modal: ui.Modal):
     try:
@@ -376,21 +383,6 @@ async def _safe_modal(interaction: discord.Interaction, modal: ui.Modal):
     except discord.NotFound:
         log.warning("Интеракция устарела (404) — модалка не открыта")
 
-
-class _BackToAdminButton(ui.Button):
-    """Кнопка возврата из встроенной панели кейсов в главное меню /admin."""
-
-    def __init__(self, user_id: int, guild_id: int):
-        super().__init__(label="⬅ В меню /admin", style=discord.ButtonStyle.secondary,
-                         custom_id="adm:back_main")
-        self.user_id = user_id
-        self.guild_id = guild_id
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id or not can_manage(interaction):
-            await interaction.response.send_message("❌ Нет доступа.", ephemeral=True)
-            return
-        await show_main_menu(interaction)
 
 
 def register(bot):

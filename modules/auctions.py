@@ -29,9 +29,11 @@ _active_bot = None
 
 def fmt_time_left(end_ts: int) -> str:
     left = max(0, end_ts - int(time.time()))
+    if left > 3600:
+        return f"<t:{end_ts}:R>"
     h, rem = divmod(left, 3600)
     m, _ = divmod(rem, 60)
-    return f"<t:{end_ts}:R>" if left > 3600 else f"{h}ч {m}м"
+    return f"{h}ч {m}м"
 
 
 class BidModal(ui.Modal, title="Сделать ставку"):
@@ -62,13 +64,10 @@ class BidModal(ui.Modal, title="Сделать ставку"):
             return
 
         await interaction.followup.send(
-            f"✅ Ставка **{result['bid_amount']}** монет принята!", ephemeral=True
+            f"✅ Ставка **{result['bid_amount']}** монет принята!\n"
+            f"Обнови список: /auction или кнопка 🔄 Обновить.",
+            ephemeral=True,
         )
-        # обновить список у всех, кто его смотрит
-        try:
-            await render_auctions(interaction.guild, interaction.channel)
-        except Exception:
-            pass
 
 
 class AuctionBidButton(ui.Button):
@@ -138,38 +137,47 @@ async def render_auctions(guild: discord.Guild, channel: discord.TextChannel):
 
 
 async def finalize_due_auctions(bot):
-    """Авто-завершение истёкших аукционов: победа/возврат + уведомления."""
+    """Авто-завершение истёкших аукционов: победа/возврат + уведомления.
+
+    Каждая запись обрабатывается в своём try — одна битая не прерывает цикл.
+    """
     finished = await db.get_finished_auctions()
     for a in finished:
-        if not await db.finalize_auction(a["id"]):
-            continue
-        item = await db._fetchone(
-            "SELECT * FROM inventory WHERE id = ?", (a["inventory_id"],)
-        )
-        role_name = str(a["role_id"])
-        if item:
-            g = bot.get_guild(a["guild_id"])
-            if g:
-                r = g.get_role(item["role_id"])
+        try:
+            if not await db.finalize_auction(a["id"]):
+                continue
+
+            item = await db._fetchone(
+                "SELECT * FROM inventory WHERE id = ?", (a["inventory_id"],)
+            )
+
+            guild = bot.get_guild(a["guild_id"])
+            if not guild:
+                continue
+
+            # имя роли — из инвентаря (в таблице auctions колонки role_id нет)
+            role_name = f"Роль #{a['inventory_id']}"
+            if item:
+                r = guild.get_role(item["role_id"])
                 if r:
                     role_name = r.name
-        guild = bot.get_guild(a["guild_id"])
-        if not guild:
-            continue
-        if a["highest_bidder"] and a["current_bid"]:
-            buyer = guild.get_member(a["highest_bidder"])
-            seller = guild.get_member(a["seller_id"])
-            if buyer:
-                await deliver_to_user(bot, buyer, guild,
-                    f"🎉 Ты выиграл аукцион **{role_name}** за **{a['current_bid']}** монет! Роль в твоём инвентаре.")
-            if seller:
-                await deliver_to_user(bot, seller, guild,
-                    f"💸 Твой аукцион **{role_name}** продан за **{a['current_bid']}** монет.")
-        elif a["seller_id"]:
-            seller = guild.get_member(a["seller_id"])
-            if seller:
-                await deliver_to_user(bot, seller, guild,
-                    f"↩️ Аукцион **{role_name}** завершился без ставок — роль вернулась в инвентарь.")
+
+            if a["highest_bidder"] and a["current_bid"]:
+                buyer = guild.get_member(a["highest_bidder"])
+                seller = guild.get_member(a["seller_id"])
+                if buyer:
+                    await deliver_to_user(bot, buyer, guild,
+                        f"🎉 Ты выиграл аукцион **{role_name}** за **{a['current_bid']}** монет! Роль в твоём инвентаре.")
+                if seller:
+                    await deliver_to_user(bot, seller, guild,
+                        f"💸 Твой аукцион **{role_name}** продан за **{a['current_bid']}** монет (уже зачислены).")
+            elif a["seller_id"]:
+                seller = guild.get_member(a["seller_id"])
+                if seller:
+                    await deliver_to_user(bot, seller, guild,
+                        f"↩️ Аукцион **{role_name}** завершился без ставок — роль вернулась в инвентарь.")
+        except Exception:
+            log.warning("Ошибка завершения аукциона #%s", a.get("id"), exc_info=True)
 
 
 async def deliver_to_user(bot, member, guild, text):

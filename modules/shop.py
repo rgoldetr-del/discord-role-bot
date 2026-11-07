@@ -3,13 +3,14 @@
 # Единый магазин бота: команда /shop.
 # Вкладки: 📦 Кейсы | 🔑 Ключи | ✨ Эффекты | ⚙️ Улучшения.
 # - оплата монетами (💰) или кристаллами (💎) — валюты НЕ конвертируются;
-# - эффект «Скидка» даёт -10% на кейсы и ключи;
-# - все покупки падают в инвентарь (/inventory): кейсы, ключи, эффекты, улучшения.
-# Заменяет собой старые /case_shop, /effect_shop, /buy_effect,
-# /shop_upgrade, /buy_upgrade — их больше нет.
+#   сильные эффекты и эндгейм-кейсы [5] продаются за кристаллы;
+# - эффект «Скидка» даёт -10% на покупку за монеты (кейсы/ключи/связки);
+# - покупка кейсов/ключей/связок — через модалку количества (1-50 шт.),
+#   есть связка «кейс + ключ» одной покупкой;
+# - кнопки-переходники: 🎒 Инвентарь ↔ 🛒 Магазин;
+# - все покупки падают в инвентарь (/inventory).
 # ======================================================================
 
-import asyncio
 import time
 
 import discord
@@ -18,7 +19,14 @@ from discord import ui
 from database import db, EFFECTS
 
 from .persistent_utils import make_id
-from .shared import get_rarity_emoji, get_rarity_name, safe_command, make_resilient
+from .shared import (
+    get_rarity_emoji,
+    get_rarity_name,
+    safe_command,
+    make_resilient,
+    MAX_PLAYER_CASES,
+    MAX_PLAYER_KEYS,
+)
 
 # защита от быстрых повторных кликов «Купить» (anti double-spend)
 _pay_locks: dict[tuple, float] = {}
@@ -76,6 +84,31 @@ def currency_emoji(currency: str) -> str:
     return "💎" if currency == "crystals" else "💰"
 
 
+def currency_name(currency: str) -> str:
+    return "кристаллов" if currency == "crystals" else "монет"
+
+
+def _base_price(case: dict, kind: str, currency: str):
+    """Базовая цена за 1 шт.: kind 'c' кейс, 'k' ключ, 'b' связка кейс+ключ.
+    None — покупка в этой валюте недоступна."""
+    if currency == "coins":
+        c, k = int(case["case_coins"] or 0), int(case["key_coins"] or 0)
+    else:
+        c, k = int(case["case_crystals"] or 0), int(case["key_crystals"] or 0)
+
+    if kind == "c":
+        return c
+    if kind == "k":
+        return k
+    if kind == "b":
+        return c + k
+    return None
+
+
+def _kind_title(kind: str) -> str:
+    return {"c": "кейс", "k": "ключ", "b": "кейс + ключ"}.get(kind, kind)
+
+
 # ===== Кнопка оплаты =====
 
 class PayButton(ui.Button):
@@ -102,6 +135,27 @@ class PayButton(ui.Button):
 
     async def callback(self, interaction: discord.Interaction, item=None):
         await self.view_ref.handle_pay(interaction, self.item_value, self.currency)
+
+
+class ShopInventoryButton(ui.Button):
+    """Кнопка-переходник из магазина в инвентарь."""
+
+    def __init__(self, view: "ShopView"):
+        super().__init__(
+            style=discord.ButtonStyle.secondary,
+            label="🎒 Инвентарь",
+            custom_id=make_id("shop", "toinv", view.user_id),
+        )
+        self.view_ref = view
+
+    async def callback(self, interaction: discord.Interaction, item=None):
+        if interaction.user.id != self.view_ref.user_id:
+            await interaction.response.send_message("Это не твой магазин.", ephemeral=True)
+            return
+        from .inventory_v2 import InventoryV2View
+
+        inv = InventoryV2View(self.view_ref.user_id, self.view_ref.guild_id)
+        await inv.refresh(interaction)
 
 
 class ShopTabSelect(ui.Select):
@@ -246,7 +300,12 @@ class ShopView(ui.View):
                     price = await apply_discount(self.user_id, self.guild_id, c["case_coins"])
                     cry = f" • 💎 {fmt(c['case_crystals'])}" if c["case_crystals"] > 0 else ""
                     zero = " 🆓" if price == 0 else ""
-                    lines.append(f"{emoji} **{c['name']}** — 💰 {fmt(price)}{cry}{zero}")
+                    bundle = await apply_discount(
+                        self.user_id, self.guild_id, c["case_coins"] + c["key_coins"])
+                    lines.append(
+                        f"{emoji} **{c['name']}** — 💰 {fmt(price)}{cry}{zero}"
+                        f" • 📦+🔑 {fmt(bundle)}"
+                    )
                 else:
                     price = await apply_discount(self.user_id, self.guild_id, c["key_coins"])
                     cry = f" • 💎 {fmt(c['key_crystals'])}" if c["key_crystals"] > 0 else ""
@@ -254,7 +313,9 @@ class ShopView(ui.View):
                     lines.append(f"{emoji} 🔑 к **{c['name']}** — 💰 {fmt(price)}{cry}{zero}")
 
             embed.description = "\n".join(lines) if lines else "_Пусто: админ ещё не создал активных кейсов._"
-            embed.set_footer(text=f"Страница {self.page + 1}/{pages} • Валюты не конвертируются: плати тем, что указано")
+            embed.set_footer(
+                text=f"Страница {self.page + 1}/{pages} • Кнопка открывает выбор количества (1-50 шт.)"
+            )
 
             if len(cases) > 1:
                 options = []
@@ -273,19 +334,16 @@ class ShopView(ui.View):
                     ))
                 self.add_item(ShopItemSelect(self, options))
 
-            for index, c in enumerate(page_cases):
-                iv = self.item_value_for(self.tab, c["id"])
+            for c in page_cases:
                 if self.tab == TAB_CASES and c["is_free"]:
                     label = "🎁 Забрать" if free_cd == 0 else f"⏳ {free_cd // 60} мин"
                     self.add_item(PayButton(self, f"f:{c['id']}", "free", label, disabled=free_cd != 0))
                     continue
-                coins_price = await apply_discount(
-                    self.user_id, self.guild_id,
-                    c["case_coins"] if self.tab == TAB_CASES else c["key_coins"]
-                )
-                crystals_price = (
-                    c["case_crystals"] if self.tab == TAB_CASES else c["key_crystals"]
-                )
+
+                iv = self.item_value_for(self.tab, c["id"])
+                coins_price = await apply_discount(self.user_id, self.guild_id, _base_price(c, "c" if self.tab == TAB_CASES else "k", "coins") or 0)
+                crystals_price = _base_price(c, "c" if self.tab == TAB_CASES else "k", "crystals") or 0
+
                 coin_label = "🎁 Забрать" if coins_price == 0 else f"💰 {fmt(coins_price)}"
                 self.add_item(PayButton(self, iv, "coins", coin_label))
                 if crystals_price > 0:
@@ -302,17 +360,22 @@ class ShopView(ui.View):
             lines = []
             for key, info in EFFECTS.items():
                 mark = "✅ активен" if key in owned else ""
+                cur = info.get("currency", "coins")
                 lines.append(
-                    f"**{info['name']}** {mark}\n↳ {info['description']}"
+                    f"**{info['name']}** — {currency_emoji(cur)} {fmt(info['price'])} {mark}\n↳ {info['description']}"
                 )
             embed.description = "\n\n".join(lines)
-            embed.set_footer(text="💰 Эффекты покупаются за монеты и действуют 1 час • хранятся в /inventory")
+            embed.set_footer(
+                text="💰 — за монеты, 💎 — за кристаллы • эффекты действуют 1 час (можно продлевать) • хранятся в /inventory"
+            )
 
             options = []
             for key, info in EFFECTS.items():
+                cur = info.get("currency", "coins")
                 options.append(discord.SelectOption(
                     label=info["name"][:100],
-                    description=("активен ✅" if key in owned else f"💰 {fmt(info['price'])}")[:100],
+                    description=("активен ✅" if key in owned
+                                 else f"{currency_emoji(cur)} {fmt(info['price'])}")[:100],
                     value=f"e:{key}",
                     default=(f"e:{key}" == (self.opened or {}).get("value")),
                 ))
@@ -345,6 +408,7 @@ class ShopView(ui.View):
                                                    description=f"💰 {fmt(sh_price)}"))
             self.add_item(ShopItemSelect(self, options))
 
+        self.add_item(ShopInventoryButton(self))
         self.add_item(ShopTabSelect(self))
 
         try:
@@ -373,6 +437,7 @@ class ShopView(ui.View):
             self.add_item(btn)
 
         self.add_item(ShopBackButton(self))
+        self.add_item(ShopInventoryButton(self))
         self.add_item(ShopTabSelect(self))
 
         try:
@@ -390,16 +455,16 @@ class ShopView(ui.View):
             await interaction.response.send_message("Это не твой магазин.", ephemeral=True)
             return
 
-        # защита от дабл-клика: одна покупка в 3 секунды на пользователя
-        if not await _acquire_pay_lock(interaction.user.id, self.guild_id):
-            await interaction.response.send_message("⏳ Подожди пару секунд между покупками.", ephemeral=True)
-            return
-
         kind, _, arg = item_value.partition(":")
         guild_id = self.guild_id
         user_id = self.user_id
 
         if kind == "f":  # бесплатный кейс: 1 раз в час
+            if not await _acquire_pay_lock(user_id, guild_id):
+                await interaction.response.send_message(
+                    "⏳ Подожди пару секунд между покупками.", ephemeral=True)
+                return
+
             result = await db.claim_free_case(user_id, guild_id)
             if result["success"]:
                 await interaction.response.send_message(
@@ -420,75 +485,63 @@ class ShopView(ui.View):
             return
 
         if kind in ("c", "k"):
-            case_id = int(arg)
-            cases = await self.load_cases()
-            case = next((c for c in cases if c["id"] == case_id), None)
-
-            if not case:
-                await interaction.response.send_message("❌ Кейс не найден или не активен.", ephemeral=True)
+            # открываем модалку количества (1-50 шт.)
+            try:
+                case_id = int(arg)
+            except ValueError:
                 return
+            await interaction.response.send_modal(
+                BuyQuantityModal(self, kind, case_id, currency))
+            return
 
-            if kind == "c":
-                base_price = case["case_coins"] if currency == "coins" else case["case_crystals"]
-                add_fn = db.add_case
-                what = f"кейс **{case['name']}**"
-            else:
-                base_price = case["key_coins"] if currency == "coins" else case["key_crystals"]
-                add_fn = db.add_key
-                what = f"ключ к кейсу **{case['name']}**"
-
-            price = await apply_discount(user_id, guild_id, base_price) if currency == "coins" else base_price
-
-            if not await db.try_spend(user_id, guild_id, price, currency):
-                bal = await db.get_or_create_user(user_id, guild_id)
-                have = bal["coins"] if currency == "coins" else bal["crystals"]
-                await interaction.response.send_message(
-                    f"❌ Недостаточно {('монет', 'кристаллов')[currency == 'crystals']}:"
-                    f" нужно {fmt(price)}, у тебя {fmt(have)}.",
-                    ephemeral=True,
-                )
+        if kind == "b":  # связка кейс + ключ
+            try:
+                case_id = int(arg)
+            except ValueError:
                 return
+            await interaction.response.send_modal(
+                BuyQuantityModal(self, "b", case_id, currency))
+            return
 
-            ok = await add_fn(user_id, guild_id, case_id, 1)
-            if not ok:
-                # лимит хранилища — вернуть деньги
-                await db.award_currency(user_id, guild_id, price, currency)
-                await interaction.response.send_message("❌ Достигнут лимит хранения (50 шт.).", ephemeral=True)
-                return
-
-            discount_note = " (скидка -10% 🏷️)" if currency == "coins" and price < base_price else ""
-            await interaction.response.send_message(
-                f"✅ Куплен {what} за **{fmt(price)}** {currency_emoji(currency)}. "
-                f"Загляни в /inventory!{discount_note}",
-                ephemeral=True,
-            )
-            await self.refresh_after_purchase(interaction)
-
-        elif kind == "e":
+        if kind == "e":
             effect = arg
             info = EFFECTS.get(effect)
             if not info:
                 await interaction.response.send_message("❌ Эффект не найден.", ephemeral=True)
                 return
 
-            if await db.has_effect(user_id, guild_id, effect):
-                await interaction.response.send_message("✅ Такой эффект уже у тебя.", ephemeral=True)
-                return
-
-            price = info["price"]
-            if not await db.try_spend_coins(user_id, guild_id, price):
+            if not await _acquire_pay_lock(user_id, guild_id):
                 await interaction.response.send_message(
-                    f"❌ Нужно 💰 {fmt(price)} монет, а у тебя меньше.", ephemeral=True)
+                    "⏳ Подожди пару секунд между покупками.", ephemeral=True)
                 return
 
-            await db.add_effect_to_inventory(user_id, guild_id, effect)
+            currency_eff = info.get("currency", "coins")
+            price = int(info["price"])
+
+            if not await db.try_spend(user_id, guild_id, price, currency_eff):
+                bal = await db.get_or_create_user(user_id, guild_id)
+                have = bal["coins"] if currency_eff == "coins" else bal["crystals"]
+                await interaction.response.send_message(
+                    f"❌ Нужно {currency_emoji(currency_eff)} {fmt(price)} {currency_name(currency_eff)}, "
+                    f"а у тебя {fmt(have)}.",
+                    ephemeral=True,
+                )
+                return
+
+            await db.add_effect_to_inventory(user_id, guild_id, effect, hours=1)
             await interaction.response.send_message(
-                f"✅ Куплен эффект **{info['name']}** за 💰 {fmt(price)}. Активен 1 час — до <t:{int(time.time()) + 3600}:R>!",
+                f"✅ Куплен эффект **{info['name']}** за {currency_emoji(currency_eff)} {fmt(price)}. "
+                f"Активен 1 час — до <t:{int(time.time()) + 3600}:R>!",
                 ephemeral=True,
             )
             await self.refresh_after_purchase(interaction)
 
         elif kind == "u":
+            if not await _acquire_pay_lock(user_id, guild_id):
+                await interaction.response.send_message(
+                    "⏳ Подожди пару секунд между покупками.", ephemeral=True)
+                return
+
             if arg in ("luck", "rich"):
                 name, desc, base = UPGRADES_TABLE[arg]
                 level = await db.get_upgradeable_role_level(user_id, guild_id, arg)
@@ -517,15 +570,130 @@ class ShopView(ui.View):
                 else:
                     await interaction.response.send_message(f"❌ Нужно 💰 {fmt(price)} монет.", ephemeral=True)
 
+    async def purchase(self, interaction: discord.Interaction, kind: str,
+                       case_id: int, currency: str, qty: int):
+        """Покупка кейсов/ключей/связок в количестве qty (1-50)."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не твой магазин.", ephemeral=True)
+            return
+
+        if not 1 <= qty <= 50:
+            await interaction.response.send_message("❌ Количество: от 1 до 50.", ephemeral=True)
+            return
+
+        # защита от дабл-клика: одна покупка в 3 секунды на пользователя
+        if not await _acquire_pay_lock(self.user_id, self.guild_id):
+            await interaction.response.send_message("⏳ Подожди пару секунд между покупками.", ephemeral=True)
+            return
+
+        user_id, guild_id = self.user_id, self.guild_id
+
+        cases = await self.load_cases()
+        case = next((c for c in cases if c["id"] == case_id), None)
+        if not case:
+            await interaction.response.send_message("❌ Кейс не найден или не активен.", ephemeral=True)
+            return
+
+        unit = _base_price(case, kind, currency)
+        if unit is None:
+            await interaction.response.send_message("❌ Такая покупка недоступна.", ephemeral=True)
+            return
+
+        # ключи к бесплатным кейсам не продаются (ключ «встроен» в связку)
+        no_key_needed = case["is_free"] or (case["key_coins"] == 0 and case["key_crystals"] == 0)
+        if kind in ("k", "b") and no_key_needed:
+            await interaction.response.send_message(
+                "❌ Этот кейс открывается без ключа — покупай только кейсы.", ephemeral=True)
+            return
+
+        if currency == "coins":
+            unit = await apply_discount(user_id, guild_id, unit)
+
+        # сколько реально влезет в хранилище
+        row_c = await db._fetchone(
+            "SELECT quantity FROM player_cases WHERE user_id = ? AND guild_id = ? AND case_id = ?",
+            (user_id, guild_id, case_id))
+        row_k = await db._fetchone(
+            "SELECT quantity FROM player_keys WHERE user_id = ? AND guild_id = ? AND case_id = ?",
+            (user_id, guild_id, case_id))
+        cur_cases = int(row_c["quantity"]) if row_c else 0
+        cur_keys = int(row_k["quantity"]) if row_k else 0
+
+        if kind == "c":
+            cap = MAX_PLAYER_CASES - cur_cases
+        elif kind == "k":
+            cap = MAX_PLAYER_KEYS - cur_keys
+        else:  # b: нужна пара (кейс + ключ)
+            cap = min(MAX_PLAYER_CASES - cur_cases, MAX_PLAYER_KEYS - cur_keys)
+
+        granted = min(qty, max(0, cap))
+        if granted <= 0:
+            await interaction.response.send_message("❌ Достигнут лимит хранения (50 шт. этого товара).", ephemeral=True)
+            return
+
+        total = unit * granted
+        if total > 0 and not await db.try_spend(user_id, guild_id, total, currency):
+            bal = await db.get_or_create_user(user_id, guild_id)
+            have = bal["coins"] if currency == "coins" else bal["crystals"]
+            await interaction.response.send_message(
+                f"❌ Недостаточно {currency_name(currency)}: нужно {currency_emoji(currency)} {fmt(total)}, "
+                f"у тебя {currency_emoji(currency)} {fmt(have)}.",
+                ephemeral=True,
+            )
+            return
+
+        # выдаём товар
+        done = 0
+        if kind == "c":
+            for _ in range(granted):
+                if await db.add_case(user_id, guild_id, case_id, 1):
+                    done += 1
+                else:
+                    break
+        elif kind == "k":
+            for _ in range(granted):
+                if await db.add_key(user_id, guild_id, case_id, 1):
+                    done += 1
+                else:
+                    break
+        else:  # b
+            for _ in range(granted):
+                if not await db.add_case(user_id, guild_id, case_id, 1):
+                    break
+                if not await db.add_key(user_id, guild_id, case_id, 1):
+                    # ключ не влез — откатываем кейс и прекращаем
+                    await db.use_case(user_id, guild_id, case_id)
+                    break
+                done += 1
+
+        if done < granted:
+            refund = unit * (granted - done)
+            if refund > 0:
+                await db.award_currency(user_id, guild_id, refund, currency)
+
+        if done == 0:
+            await interaction.response.send_message("❌ Не удалось выдать товар (лимит хранения).", ephemeral=True)
+            return
+
+        spent = unit * done
+        what = _kind_title(kind)
+        plural = "" if done == 1 else f"×{done}"
+        discount_note = " (скидка -10% 🏷️)" if currency == "coins" and unit != _base_price(case, kind, "coins") else ""
+        await interaction.response.send_message(
+            f"✅ Куплено: **{what}{plural}** «{case['name']}» "
+            f"за {currency_emoji(currency)} {fmt(spent)}{discount_note}. Загляни в /inventory!",
+            ephemeral=True,
+        )
+        await self.refresh_after_purchase(interaction)
+
     async def refresh_after_purchase(self, interaction: discord.Interaction):
         """Обновить исходное сообщение магазина после покупки.
 
-        ВАЖНО: handle_pay всегда отвечает ephemeral-сообщением через
+        handle_pay всегда отвечает ephemeral-сообщением через
         interaction.response.send_message(...) — до этого метода. Поэтому
-        edit_original_response/handle к этому же interaction НЕПРИМЕНИМЫ
-        (Discord отвечает 404 Unknown interaction — именно эта ошибка была
-        в логах хостинга). Правильно: редактировать исходное сообщение /shop
-        напрямую через interaction.message.edit(...).
+        edit_original_response/handle к этому же interaction НЕПРИМЕНИМЫ.
+        Правильно: редактировать исходное сообщение /shop напрямую
+        через interaction.message.edit(...).
         """
         self.opened = None
         try:
@@ -539,6 +707,8 @@ class ShopView(ui.View):
 
     async def build_card(self, item_value: str):
         kind, _, arg = item_value.partition(":")
+        if kind == "b":
+            kind = "c"  # карточку показываем как у кейса, но с кнопками связки
 
         if kind in ("c", "k", "f"):
             case_id = int(arg)
@@ -555,9 +725,9 @@ class ShopView(ui.View):
                 status = "🆓 можно забрать сейчас!" if cd == 0 else f"⏳ следующий через <t:{int(time.time()) + cd}:R>"
                 return {
                     "title": f"🎁 {emoji} Бесплатный кейс «{case['name']}»",
-                    "description": "Бесплатный кейс — **1 раз в час**. Ключ не нужен? Уточни у админа: "
-                                   "обычно бесплатный кейс открывается без ключа из инвентаря.",
-                    "fields": [("Редкость", get_rarity_name(case["rarity"])), ("Статус", status)],
+                    "description": "Бесплатный кейс — **1 раз в час**. Кейс и ключ выдаются вместе, "
+                                   "открывается без ключа.",
+                    "fields": [("Редкость", rarity_name), ("Статус", status)],
                     "footer": "Открыть после получения: /inventory → 📦 Кейсы",
                     "buttons": ([PayButton(self, item_value, "free", "🎁 Забрать бесплатно")]
                                 if cd == 0 else []),
@@ -568,11 +738,15 @@ class ShopView(ui.View):
                 field_name = "Редкость"
                 coins_price = await apply_discount(self.user_id, self.guild_id, case["case_coins"])
                 crystals_price = case["case_crystals"]
+                bundle_coins = await apply_discount(
+                    self.user_id, self.guild_id, case["case_coins"] + case["key_coins"])
+                bundle_crystals = case["case_crystals"] + case["key_crystals"]
             else:
                 title = f"🔑 Ключ к кейсу «{case['name']}»"
                 field_name = "Редкость кейса"
                 coins_price = await apply_discount(self.user_id, self.guild_id, case["key_coins"])
                 crystals_price = case["key_crystals"]
+                bundle_coins = bundle_crystals = 0
 
             fields = [
                 (field_name, rarity_name),
@@ -581,15 +755,29 @@ class ShopView(ui.View):
             if crystals_price > 0:
                 fields.append(("💎 Цена", fmt(crystals_price)))
 
-            coin_label = "🎁 Забрать бесплатно" if coins_price == 0 else f"Купить за 💰 {fmt(coins_price)}"
+            coin_label = "🎁 Забрать бесплатно" if coins_price == 0 else f"💰 Купить {fmt(coins_price)}"
             buttons = [PayButton(self, item_value, "coins", coin_label)]
             if crystals_price > 0:
-                buttons.append(PayButton(self, item_value, "crystals", f"Купить за 💎 {fmt(crystals_price)}"))
+                buttons.append(PayButton(self, item_value, "crystals", f"💎 Купить {fmt(crystals_price)}"))
+
+            if kind == "c":
+                # связка «кейс + ключ» одной покупкой
+                no_key_needed = case["is_free"] or (case["key_coins"] == 0 and case["key_crystals"] == 0)
+                if not no_key_needed:
+                    b_label = f"📦+🔑 Купить {fmt(bundle_coins)}"
+                    buttons.append(PayButton(self, f"b:{case['id']}", "coins", b_label))
+                    if bundle_crystals > 0:
+                        buttons.append(PayButton(self, f"b:{case['id']}", "crystals",
+                                                 f"📦+🔑 💎 {fmt(bundle_crystals)}"))
+
+            footer = "Валюты не конвертируются: плати монетами ИЛИ кристаллами."
+            if kind == "c":
+                footer += " • 📦+🔑 — связка «кейс + ключ», количество до 50 шт."
             return {
                 "title": title,
                 "description": "Открывается из инвентаря (нужен кейс + ключ).",
                 "fields": fields,
-                "footer": "Валюты не конвертируются: плати монетами ИЛИ кристаллами.",
+                "footer": footer,
                 "buttons": buttons,
             }
 
@@ -598,15 +786,18 @@ class ShopView(ui.View):
             if not info:
                 return None
             owned = arg in set(await db.get_user_effects(self.user_id, self.guild_id))
-            buttons = [] if owned else [PayButton(self, item_value, "coins",
-                                                  f"Купить за 💰 {fmt(info['price'])}")]
+            cur = info.get("currency", "coins")
+            buttons = [] if owned else [
+                PayButton(self, item_value, "coins" if cur == "coins" else "crystals",
+                          f"Купить за {currency_emoji(cur)} {fmt(info['price'])}")
+            ]
             return {
                 "title": info["name"],
                 "description": info["description"],
-                "fields": [("Цена", f"💰 {fmt(info['price'])}"),
-                           ("Действует", "1 час"),
+                "fields": [("Цена", f"{currency_emoji(cur)} {fmt(info['price'])}"),
+                           ("Действует", "1 час (можно продлевать)"),
                            ("Статус", "✅ активен" if owned else "не куплен")],
-                "footer": "Эффекты покупаются за монеты и действуют ровно 1 час.",
+                "footer": "Эффекты действуют 1 час; повторная покупка продлевает срок.",
                 "buttons": buttons,
             }
 
@@ -638,6 +829,36 @@ class ShopView(ui.View):
 
 
 UPGRADES_TABLE = UPGRADE_INFO  # единый справочник улучшений (без дублирования)
+
+
+class BuyQuantityModal(ui.Modal):
+    """Модалка количества для покупки кейсов/ключей/связок."""
+
+    def __init__(self, view_ref: "ShopView", kind: str, case_id: int, currency: str):
+        title = f"Покупка: {_kind_title(kind)}"
+        super().__init__(title=title[:45], custom_id=make_id("shop", "buyq", kind, currency, case_id))
+        self.view_ref = view_ref
+        self.kind = kind
+        self.case_id = case_id
+        self.currency = currency
+
+        self.qty_input = ui.TextInput(
+            label="Количество (1-50)",
+            placeholder="Например: 5",
+            default="1",
+            max_length=3,
+            required=True,
+        )
+        self.add_item(self.qty_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            qty = int(self.qty_input.value.strip())
+        except ValueError:
+            await interaction.response.send_message("❌ Количество должно быть числом.", ephemeral=True)
+            return
+
+        await self.view_ref.purchase(interaction, self.kind, self.case_id, self.currency, qty)
 
 
 class ShopItemSelect(ui.Select):

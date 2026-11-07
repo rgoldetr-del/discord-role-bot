@@ -37,7 +37,11 @@ from .shared import can_manage
 
 
 async def generate_roles_for_case(guild: discord.Guild, case_id: int):
-    """Создаёт визуальные роли для всех пустых редкостей кейса."""
+    """Создаёт визуальные роли для всех пустых редкостей кейса.
+
+    Существующие роли с тем же именем переиспользуются (дубликаты «Имя 2»
+    не создаются никогда).
+    """
     case = await db.get_case_details(case_id)
 
     if not case:
@@ -47,7 +51,7 @@ async def generate_roles_for_case(guild: discord.Guild, case_id: int):
         return 0, "Кейс не с этого сервера."
 
     created = 0
-    existing_names = {r.name for r in guild.roles}
+    roles_by_name = {r.name: r for r in guild.roles}
 
     for rarity in case['rarities']:
         if rarity['roles']:
@@ -57,30 +61,26 @@ async def generate_roles_for_case(guild: discord.Guild, case_id: int):
         rarity_color = RARITY_COLORS.get(rarity['rarity'], 0x808080)
 
         base_name = f"{case['name']} • {rarity_name}"
-        role_name = base_name
-        counter = 2
+        role = roles_by_name.get(base_name)
 
-        while role_name in existing_names:
-            role_name = f"{base_name} {counter}"
-            counter += 1
-
-        try:
-            role = await guild.create_role(
-                name=role_name,
-                colour=discord.Colour(rarity_color),
-                permissions=discord.Permissions.none(),
-                hoist=False,
-                mentionable=False,
-                reason=f"Автогенерация роли для кейса {case['name']}"
-            )
-        except discord.Forbidden:
-            return created, "У бота нет права создавать роли."
-        except discord.HTTPException as e:
-            return created, f"Ошибка создания роли: {e}"
+        if role is None:
+            try:
+                role = await guild.create_role(
+                    name=base_name,
+                    colour=discord.Colour(rarity_color),
+                    permissions=discord.Permissions.none(),
+                    hoist=False,
+                    mentionable=False,
+                    reason=f"Автогенерация роли для кейса {case['name']}"
+                )
+                created += 1
+            except discord.Forbidden:
+                return created, "У бота нет права создавать роли."
+            except discord.HTTPException as e:
+                return created, f"Ошибка создания роли: {e}"
+            roles_by_name[role.name] = role
 
         await db.add_roles_to_case_rarity(rarity['id'], [role.id])
-        existing_names.add(role_name)
-        created += 1
 
     return created, None
 

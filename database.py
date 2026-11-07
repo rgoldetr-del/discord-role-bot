@@ -32,23 +32,23 @@ EFFECTS = {
     },
     "luck_charm": {
         "name": "🍀 Талисман удачи", "emoji": "🍀",
-        "description": "Перекручивает пустые сектора колеса в пользу. Действует 1 час.",
-        "price": 2000, "currency": "coins",
+        "description": "+10% к шансу редких наград в кейсах. Действует 1 час.",
+        "price": 10, "currency": "crystals",
     },
     "critic": {
         "name": "⚡ Критик", "emoji": "⚡",
         "description": "10% шанс увеличить выигрыш в мини-играх на 25%. Действует 1 час.",
-        "price": 1400, "currency": "coins",
+        "price": 5, "currency": "crystals",
     },
     "crystal_guard": {
         "name": "💎 Хранитель кристаллов", "emoji": "💎",
-        "description": "15% шанс вернуть кристаллы при проигрыше в мини-играх. Действует 1 час.",
-        "price": 1800, "currency": "coins",
+        "description": "15% шанс вернуть ставку кристаллами при проигрыше в мини-играх. Действует 1 час.",
+        "price": 8, "currency": "crystals",
     },
     "high_roller": {
         "name": "🔥 Азарт", "emoji": "🔥",
         "description": "Увеличивает максимальные ставки в мини-играх в 1.5 раза. Действует 1 час.",
-        "price": 2200, "currency": "coins",
+        "price": 15, "currency": "crystals",
     },
 }
 
@@ -135,6 +135,9 @@ class Database:
     async def connect(self):
         self.db = await aiosqlite.connect(DB_PATH)
         self.db.row_factory = aiosqlite.Row
+        # WAL: чтения не блокируют запись — меньше «database is locked» при конкуренции
+        await self.db.execute("PRAGMA journal_mode = WAL")
+        await self.db.execute("PRAGMA busy_timeout = 5000")
         await self.create_tables()
         await self.migrate_schema()
 
@@ -629,22 +632,28 @@ class Database:
         )
         return bool(row and row["count"] > 0)
 
-    async def add_effect_to_inventory(self, user_id: int, guild_id: int, effect: str) -> int:
-        """Продлевает эффект на 1 час (покупка суммируется). Возвращает id предмета."""
+    async def add_effect_to_inventory(self, user_id: int, guild_id: int, effect: str, hours: int = 1) -> int:
+        """Добавляет эффект на hours часов; при повторной покупке время суммируется.
+
+        Возвращает id предмета (0 — продление существующей записи).
+        """
         if effect not in EFFECTS:
             return -1
+        hours = max(1, int(hours))
 
         role_id = EFFECT_ROLE_IDS.get(effect, 2999)
         now = int(time.time())
+        duration = hours * EFFECT_DURATION
 
-        # уже есть активный эффект — просто продлеваем от текущего момента
+        # активный эффект — продлеваем (остаток + срок покупки суммируются)
         cur = await self.db.execute(
             """
-            UPDATE inventory SET effect_expires_at = ?, is_applied = 1
+            UPDATE inventory
+            SET effect_expires_at = COALESCE(effect_expires_at, 0) + ?, is_applied = 1
             WHERE user_id = ? AND guild_id = ? AND role_type = 'effect'
               AND rarity = ? AND COALESCE(effect_expires_at, 0) > ?
             """,
-            (now + EFFECT_DURATION, user_id, guild_id, effect, now),
+            (duration, user_id, guild_id, effect, now),
         )
         await self.db.commit()
         if cur.rowcount > 0:
@@ -656,7 +665,7 @@ class Database:
             UPDATE inventory SET effect_expires_at = ?, is_applied = 1
             WHERE user_id = ? AND guild_id = ? AND role_type = 'effect' AND rarity = ?
             """,
-            (now + EFFECT_DURATION, user_id, guild_id, effect),
+            (now + duration, user_id, guild_id, effect),
         )
         await self.db.commit()
         if cur.rowcount > 0:
@@ -668,7 +677,7 @@ class Database:
             (user_id, guild_id, role_id, role_type, rarity, level, is_applied, effect_expires_at)
             VALUES (?, ?, ?, 'effect', ?, 1, 1, ?)
             """,
-            (user_id, guild_id, role_id, effect, now + EFFECT_DURATION)
+            (user_id, guild_id, role_id, effect, now + duration)
         ) as cursor:
             await self.db.commit()
             return cursor.lastrowid
@@ -1045,6 +1054,8 @@ class Database:
             rarity["rarity"]
             for rarity in case_details["rarities"]
             if not rarity["roles"]
+            and rarity.get("reward_coins") is None
+            and rarity.get("reward_crystals") is None
         ]
 
         if empty_rarities:
@@ -1747,48 +1758,63 @@ class Database:
         }
 
     async def place_bid(self, bidder_id: int, auction_id: int, bid_amount: int) -> Dict[str, Any]:
-        auction = await self._fetchone(
-            "SELECT * FROM auctions WHERE id = ?",
-            (auction_id,)
-        )
+        if bid_amount <= 0:
+            return {"success": False, "error": "Ставка должна быть положительным числом."}
 
-        if not auction:
-            return {"success": False, "error": "Аукцион не найден."}
+        # Оптимистичная блокировка: UPDATE ... WHERE current_bid = <прочитанное>.
+        # Если между чтением и записью кто-то перебил ставку — возвращаем монеты
+        # и перечитываем аукцион (защита от двойного возврата предыдущему лидеру).
+        for _attempt in range(5):
+            auction = await self._fetchone(
+                "SELECT * FROM auctions WHERE id = ?",
+                (auction_id,)
+            )
 
-        now = int(datetime.now().timestamp())
+            if not auction:
+                return {"success": False, "error": "Аукцион не найден."}
 
-        if now >= auction["end_time"]:
-            return {"success": False, "error": "Аукцион завершён."}
+            now = int(time.time())
 
-        if auction["seller_id"] == bidder_id:
-            return {"success": False, "error": "Нельзя делать ставку на свой аукцион."}
+            if now >= auction["end_time"]:
+                return {"success": False, "error": "Аукцион завершён."}
 
-        current_bid = auction["current_bid"] or 0
-        # при нулевой стартовой цене первая ставка — минимум 1 монета
-        min_bid = max(1, auction["start_price"]) if current_bid <= 0 else current_bid + 100
+            if auction["seller_id"] == bidder_id:
+                return {"success": False, "error": "Нельзя делать ставку на свой аукцион."}
 
-        if bid_amount < min_bid:
-            return {"success": False, "error": f"Минимальная ставка: {min_bid} монет."}
+            current_bid = auction["current_bid"] or 0
+            # при нулевой стартовой цене первая ставка — минимум 1 монета
+            min_bid = max(1, auction["start_price"]) if current_bid <= 0 else current_bid + 100
 
-        await self.get_or_create_user(bidder_id, auction["guild_id"])
+            if bid_amount < min_bid:
+                return {"success": False, "error": f"Минимальная ставка: {min_bid} монет."}
 
-        if not await self.try_spend_coins(bidder_id, auction["guild_id"], bid_amount):
-            return {"success": False, "error": "Недостаточно монет."}
+            await self.get_or_create_user(bidder_id, auction["guild_id"])
 
-        if current_bid > 0 and auction["highest_bidder"]:
-            await self.update_coins(auction["highest_bidder"], auction["guild_id"], current_bid)
+            if not await self.try_spend_coins(bidder_id, auction["guild_id"], bid_amount):
+                return {"success": False, "error": "Недостаточно монет."}
 
-        await self.db.execute(
-            """
-            UPDATE auctions
-            SET current_bid = ?, highest_bidder = ?
-            WHERE id = ?
-            """,
-            (bid_amount, bidder_id, auction_id)
-        )
-        await self.db.commit()
+            async with self.db.execute(
+                """
+                UPDATE auctions
+                SET current_bid = ?, highest_bidder = ?
+                WHERE id = ? AND COALESCE(current_bid, 0) = ?
+                """,
+                (bid_amount, bidder_id, auction_id, current_bid)
+            ) as cursor:
+                await self.db.commit()
+                if cursor.rowcount > 0:
+                    # наша ставка принята — теперь безопасно вернуть монеты
+                    # предыдущему лидеру (ровно один раз, под нашей блокировкой)
+                    if current_bid > 0 and auction["highest_bidder"]:
+                        await self.update_coins(
+                            auction["highest_bidder"], auction["guild_id"], current_bid
+                        )
+                    return {"success": True, "bid_amount": bid_amount}
 
-        return {"success": True, "bid_amount": bid_amount}
+            # гонка: кто-то перебил раньше — возвращаем монеты и пробуем снова
+            await self.update_coins(bidder_id, auction["guild_id"], bid_amount)
+
+        return {"success": False, "error": "Слишком много одновременных ставок. Попробуй ещё раз."}
 
     async def get_active_auctions(self, guild_id: int):
         now = int(datetime.now().timestamp())
@@ -1805,9 +1831,13 @@ class Database:
         )
 
     async def finalize_auction(self, auction_id: int) -> bool:
-        """Завершить аукцион: продать роль победителю или вернуть продавцу."""
+        """Завершить аукцион: продать роль победителю или вернуть продавцу.
+
+        Монеты победителя удержаны при ставке (проигравшим вернули при перебивании),
+        поэтому здесь продавцу выплачивается current_bid, а победитель получает роль.
+        """
         auction = await self._fetchone("SELECT * FROM auctions WHERE id = ?", (auction_id,))
-        if not auction or int(datetime.now().timestamp()) < auction["end_time"]:
+        if not auction or int(time.time()) < auction["end_time"]:
             return False
 
         item = await self._fetchone(
@@ -1815,15 +1845,19 @@ class Database:
         )
 
         if auction["highest_bidder"] and auction["current_bid"] and item:
-            # Победитель получает роль, монеты удержаны при ставке — списывать повторно не нужно.
+            # Победитель получает роль (монеты уже списаны при ставке).
             await self.db.execute(
                 "UPDATE inventory SET user_id = ?, is_applied = 0 WHERE id = ?",
                 (auction["highest_bidder"], auction["inventory_id"])
             )
+            # Продавец получает полную сумму ставки (монеты не сгорают).
+            await self.award_currency(
+                auction["seller_id"], auction["guild_id"], auction["current_bid"], "coins"
+            )
         elif item:
             # Ставок не было — снимаем блокировку, роль остаётся у продавца.
             await self.db.execute(
-                "UPDATE inventory SET is_applied = 0 WHERE id = ? AND is_applied = 2",
+                "UPDATE inventory SET is_applied = 0 WHERE id = ?",
                 (auction["inventory_id"],)
             )
 

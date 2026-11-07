@@ -125,12 +125,14 @@ def item_title(guild: discord.Guild, item: dict) -> str:
 
 
 async def count_active_effects(user_id: int, guild_id: int) -> int:
+    """Только неистёкшие эффекты (effect_expires_at > now)."""
     row = await db._fetchone(
         """
         SELECT COUNT(*) AS count FROM inventory
         WHERE user_id = ? AND guild_id = ? AND role_type = 'effect' AND is_applied = 1
+          AND COALESCE(effect_expires_at, 0) > ?
         """,
-        (user_id, guild_id)
+        (user_id, guild_id, int(time.time()))
     )
     return row["count"] if row else 0
 
@@ -303,6 +305,27 @@ class InventoryRefreshButton(ui.Button):
             return
 
         await self.view_ref.refresh(interaction)
+
+
+class InventoryShopButton(ui.Button):
+    """Кнопка-переходник из инвентаря в магазин."""
+
+    def __init__(self, view: "InventoryV2View"):
+        super().__init__(
+            style=discord.ButtonStyle.secondary,
+            label="🛒 Магазин",
+            custom_id=make_id("inv2", "toshop", view.user_id)
+        )
+        self.view_ref = view
+
+    async def callback(self, interaction: discord.Interaction, item=None):
+        if interaction.user.id != self.view_ref.user_id:
+            await interaction.response.send_message("Это не твой инвентарь.", ephemeral=True)
+            return
+        from .shop import ShopView
+
+        shop = ShopView(self.view_ref.user_id, self.view_ref.guild_id)
+        await shop.refresh(interaction)
 
 
 class InventoryBackButton(ui.Button):
@@ -501,6 +524,7 @@ class InventoryV2View(ui.View):
             if self.page < pages - 1:
                 self.add_item(InventoryPageButton(self, +1, "▶️"))
 
+        self.add_item(InventoryShopButton(self))
         self.add_item(InventoryRefreshButton(self))
 
         await deliver_message(interaction, embed=embed, view=self)

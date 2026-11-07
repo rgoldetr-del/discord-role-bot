@@ -22,6 +22,21 @@ from .shared import (
 )
 from .shared import can_manage as can_manage_cases, make_resilient
 
+
+async def _send_modal(interaction: discord.Interaction, modal: ui.Modal):
+    """Открыть модалку и запомнить сообщение панели, к которой она привязана.
+
+    У modal-submit интеракций interaction.message == None, поэтому без этого
+    панель кейсов не обновлялась после сохранения настроек.
+    """
+    modal.panel_message = getattr(interaction, "message", None)
+    await interaction.response.send_modal(modal)
+
+
+def _panel_of(modal, interaction):
+    """Сообщение панели для обновления после сабмита модалки."""
+    return getattr(modal, "panel_message", None) or getattr(interaction, "message", None)
+
 async def _preset_safe_create_role(
     guild: discord.Guild,
     roles_by_name: dict,
@@ -421,7 +436,7 @@ class CreateCaseModal(ui.Modal, title="Создать кейс"):
             "Кристальные цены, редкость и признак бесплатного кейса можно изменить в настройках кейса.",
             ephemeral=True
         )
-        await self.view_ref.refresh_message(getattr(interaction, "message", None))
+        await self.view_ref.refresh_message(_panel_of(self, interaction))
 
 
 class CaseSettingsModal(ui.Modal):
@@ -513,7 +528,7 @@ class CaseSettingsModal(ui.Modal):
             return
 
         await interaction.response.send_message("✅ Настройки кейса сохранены.", ephemeral=True)
-        await self.view_ref.refresh_message(getattr(interaction, "message", None))
+        await self.view_ref.refresh_message(_panel_of(self, interaction))
 
 
 class CaseMetaModal(ui.Modal, title="Редкость и тип кейса"):
@@ -570,7 +585,7 @@ class CaseMetaModal(ui.Modal, title="Редкость и тип кейса"):
             return
 
         await interaction.response.send_message("✅ Редкость и тип кейса сохранены.", ephemeral=True)
-        await self.view_ref.refresh_message(getattr(interaction, "message", None))
+        await self.view_ref.refresh_message(_panel_of(self, interaction))
 
 
 class AddRarityModal(ui.Modal, title="Добавить редкость"):
@@ -641,7 +656,7 @@ class AddRarityModal(ui.Modal, title="Добавить редкость"):
         )
 
         await interaction.response.send_message("✅ Редкость добавлена.", ephemeral=True)
-        await self.view_ref.refresh_message(getattr(interaction, "message", None))
+        await self.view_ref.refresh_message(_panel_of(self, interaction))
 
 
 class RaritySettingsModal(ui.Modal):
@@ -693,7 +708,7 @@ class RaritySettingsModal(ui.Modal):
             return
 
         await interaction.response.send_message("✅ Настройки редкости сохранены.", ephemeral=True)
-        await self.view_ref.refresh_message(getattr(interaction, "message", None))
+        await self.view_ref.refresh_message(_panel_of(self, interaction))
 
 
 class AddRoleModal(ui.Modal, title="Добавить роль в редкость"):
@@ -733,7 +748,7 @@ class AddRoleModal(ui.Modal, title="Добавить роль в редкост�
 
         await db.add_roles_to_case_rarity(self.view_ref.case_rarity_id, [role.id])
         await interaction.response.send_message(f"✅ Роль **{role.name}** добавлена.", ephemeral=True)
-        await self.view_ref.refresh_message(getattr(interaction, "message", None))
+        await self.view_ref.refresh_message(_panel_of(self, interaction))
 
 
 class DeleteCaseModal(ui.Modal, title="Удаление кейса"):
@@ -770,7 +785,7 @@ class DeleteCaseModal(ui.Modal, title="Удаление кейса"):
             self.view_ref.guild_id,
             self.view_ref.guild
         )
-        await view.refresh_message(getattr(interaction, "message", None))
+        await view.refresh_message(_panel_of(self, interaction))
 
 
 PRESET_INSTALL_LOCKS: dict[int, float] = {}
@@ -829,7 +844,7 @@ class DeleteAllCasesModal(ui.Modal, title="Удалить все кейсы"):
         except discord.HTTPException:
             pass
 
-        await self.view_ref.refresh_message(getattr(interaction, "message", None))
+        await self.view_ref.refresh_message(_panel_of(self, interaction))
 
 
 async def _install_presets_background(interaction: discord.Interaction):
@@ -1147,6 +1162,14 @@ class CaseAdminListView(ui.View):
         gen_all_btn.callback = self.gen_all_callback
         self.add_item(gen_all_btn)
 
+        delete_all_btn = ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="🗑️ Удалить все кейсы",
+            custom_id="ca:deleteall"
+        )
+        delete_all_btn.callback = self.delete_all_callback
+        self.add_item(delete_all_btn)
+
     # --- Логика кнопки «⚡ Готовые пресеты» (вызывается через preset_callback) ---
     async def _preset_impl(self, interaction: discord.Interaction):
         """Создать готовые кейсы с редкостями и ролями + полная валидация каждого шага."""
@@ -1187,7 +1210,8 @@ class CaseAdminListView(ui.View):
         # имена уже существующих кейсов — чтобы не плодить дубли при повторном нажатии
         existing_cases = await db.get_all_cases(guild.id, active_only=False)
         existing_names = {c["name"] for c in [dict(x) for x in existing_cases]}
-        existing_role_names = {r.name for r in guild.roles}
+        # карта «имя роли -> объект роли» для реюза (не создаём дубли)
+        roles_by_name = {r.name: r for r in guild.roles}
 
         for preset in PRESET_CASES:
             name = preset["name"]
@@ -1246,34 +1270,36 @@ class CaseAdminListView(ui.View):
                     case_failed = True
                     break
 
-                # 3) создаём и привязываем роли
+                # 3) привязываем роли: СНАЧАЛА переиспользуем существующую роль
+                #    с тем же именем (никаких дублей «Имя 2»), создаём только
+                #    если роли с таким именем нет на сервере
                 for role_name in rarity["roles"]:
-                    final_name, counter = role_name, 2
-                    while final_name in existing_role_names:
-                        final_name = f"{role_name} {counter}"
-                        counter += 1
+                    role = roles_by_name.get(role_name)
+                    created_new = False
 
-                    try:
-                        role = await create_role_with_retry(
-                            guild, final_name,
-                            RARITY_COLORS.get(rarity["rarity"], 0x808080),
-                            f"Пресет кейса {name}",
-                        )
-                    except discord.Forbidden:
-                        report_err.append(f"❌ {name}: нет прав создать роль {final_name}")
-                        case_failed = True
-                        break
-                    except discord.HTTPException as e:
-                        report_err.append(f"❌ {name}: ошибка создания роли {final_name}: {e}")
-                        case_failed = True
-                        break
+                    if role is None:
+                        try:
+                            role = await create_role_with_retry(
+                                guild, role_name,
+                                RARITY_COLORS.get(rarity["rarity"], 0x808080),
+                                f"Пресет кейса {name}",
+                            )
+                        except discord.Forbidden:
+                            report_err.append(f"❌ {name}: нет прав создать роль {role_name}")
+                            case_failed = True
+                            break
+                        except discord.HTTPException as e:
+                            report_err.append(f"❌ {name}: ошибка создания роли {role_name}: {e}")
+                            case_failed = True
+                            break
 
-                    if role is None or not getattr(role, "id", None):
-                        report_err.append(f"❌ {name}: роль {final_name} не создана (лимит/429)")
-                        case_failed = True
-                        break
+                        if role is None or not getattr(role, "id", None):
+                            report_err.append(f"❌ {name}: роль {role_name} не создана (лимит/429)")
+                            case_failed = True
+                            break
 
-                    existing_role_names.add(final_name)
+                        created_new = True
+                        roles_by_name[role.name] = role
 
                     # привязка роли к редкости
                     await db.add_roles_to_case_rarity(rarity_id, [role.id])
@@ -1282,13 +1308,14 @@ class CaseAdminListView(ui.View):
                     rarity_after = await db.get_case_rarity_details(rarity_id)
                     if not rarity_after or role.id not in rarity_after.get("roles", []):
                         report_err.append(
-                            f"❌ {name}: роль {final_name} создана, но НЕ привязалась к {rarity['rarity']}"
+                            f"❌ {name}: роль {role.name} есть, но НЕ привязалась к {rarity['rarity']}"
                         )
                         case_failed = True
                         break
 
-                    # пауза, чтобы не упереться в лимит создания ролей
-                    await asyncio.sleep(0.5)
+                    # пауза только после реального создания роли (rate limit Discord)
+                    if created_new:
+                        await asyncio.sleep(0.5)
 
                 if case_failed:
                     break
@@ -1429,7 +1456,7 @@ class CaseAdminListView(ui.View):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(CreateCaseModal(self))
+        await _send_modal(interaction, CreateCaseModal(self))
 
     async def refresh_callback(self, interaction: discord.Interaction, *_):
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
@@ -1444,7 +1471,24 @@ class CaseAdminListView(ui.View):
             return
 
         panel_message = getattr(interaction, "message", None)
-        await self._preset_impl(interaction)
+
+        # защита от двойного клика: две параллельные установки недопустимы
+        guild_id = interaction.guild.id
+        now = time.time()
+        started = PRESET_INSTALL_LOCKS.get(guild_id)
+        if started is not None and now - started < 1800:
+            await interaction.response.send_message(
+                "⏳ Установка пресета уже запущена. Подожди завершения.",
+                ephemeral=True
+            )
+            return
+        PRESET_INSTALL_LOCKS[guild_id] = now
+
+        try:
+            await self._preset_impl(interaction)
+        finally:
+            PRESET_INSTALL_LOCKS.pop(guild_id, None)
+
         await self.refresh_message(panel_message)
 
     async def gen_all_callback(self, interaction: discord.Interaction, *_):
@@ -1500,7 +1544,7 @@ class CaseAdminListView(ui.View):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(DeleteAllCasesModal(self))
+        await _send_modal(interaction, DeleteAllCasesModal(self))
 
     async def back_to_admin_callback(self, interaction: discord.Interaction, *_):
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
@@ -1673,7 +1717,7 @@ class CaseAdminView(ui.View):
             await interaction.response.send_message("❌ Кейс не найден.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(CaseSettingsModal(self, case))
+        await _send_modal(interaction, CaseSettingsModal(self, case))
 
     async def meta_callback(self, interaction: discord.Interaction, *_):
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
@@ -1685,14 +1729,14 @@ class CaseAdminView(ui.View):
             await interaction.response.send_message("❌ Кейс не найден.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(CaseMetaModal(self, case))
+        await _send_modal(interaction, CaseMetaModal(self, case))
 
     async def add_rarity_callback(self, interaction: discord.Interaction, *_):
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(AddRarityModal(self))
+        await _send_modal(interaction, AddRarityModal(self))
 
     async def activate_callback(self, interaction: discord.Interaction, *_):
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
@@ -1725,7 +1769,7 @@ class CaseAdminView(ui.View):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(DeleteCaseModal(self))
+        await _send_modal(interaction, DeleteCaseModal(self))
 
     async def back_callback(self, interaction: discord.Interaction, *_):
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
@@ -1883,14 +1927,14 @@ class RarityAdminView(ui.View):
             await interaction.response.send_message("❌ Редкость не найдена.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(RaritySettingsModal(self, rarity))
+        await _send_modal(interaction, RaritySettingsModal(self, rarity))
 
     async def add_role_callback(self, interaction: discord.Interaction, *_):
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
             await interaction.response.send_message("У тебя нет доступа.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(AddRoleModal(self))
+        await _send_modal(interaction, AddRoleModal(self))
 
     async def prev_callback(self, interaction: discord.Interaction, *_):
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):
@@ -1918,7 +1962,7 @@ class RarityAdminView(ui.View):
         )
 
         view = CaseAdminView(self.user_id, self.guild_id, self.guild, self.case_id)
-        await view.refresh_message(getattr(interaction, "message", None))
+        await view.refresh_message(_panel_of(self, interaction))
 
     async def back_callback(self, interaction: discord.Interaction, *_):
         if interaction.user.id != self.user_id or not can_manage_cases(interaction):

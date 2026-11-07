@@ -1,4 +1,35 @@
+# Виртуальное окружение Python
+.venv/
+venv/
+env/
 __pycache__/
 *.pyc
-bot_database.db
+*.pyo
+
+# Файлы с секретами
 .env
+.env.local
+*.secret
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ОС
+.DS_Store
+Thumbs.db
+
+# База данных бота
+*.db
+*.sqlite
+*.sqlite3
+
+# Логи
+*.log
+logs/
+
+# Временные файлы
+tmp/
+temp/
